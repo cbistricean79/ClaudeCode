@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Board</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: status summary across the top, then the entry form (narrow, left)
+     beside the task list (wide, right). One column on phones. */
+  :root {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --ink: #17212b;
+    --muted: #5a6774;
+    --line: #d5dbe2;
+    --accent: #2447c6;
+    --accent-ink: #ffffff;
+    --todo: #5f6b78;
+    --doing: #a85f00;
+    --done: #1d7a4c;
+    --late: #b3261e;
+    --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12171d;
+      --surface: #1b222a;
+      --ink: #e7ecf1;
+      --muted: #9aa6b2;
+      --line: #2f3944;
+      --accent: #8fa8ff;
+      --accent-ink: #0e1730;
+      --todo: #a3aeb9;
+      --doing: #f0b35a;
+      --done: #62c992;
+      --late: #ff8a80;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .page {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 28px 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  header { display: flex; flex-direction: column; gap: 4px; }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(1.7rem, 4vw, 2.3rem);
+    line-height: 1.1;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .lede { margin: 0; color: var(--muted); max-width: 60ch; }
+
+  .notice {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--doing);
+    background: var(--surface);
+    padding: 10px 14px;
+    border-radius: 4px;
+  }
+
+  /* Summary */
+  .summary { display: flex; flex-direction: column; gap: 12px; }
+  .counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .count { border-top: 3px solid var(--c); padding-top: 8px; min-width: 0; }
+  .count .num {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 2rem;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .count .lbl {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .bar {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--line);
+  }
+  .bar span { display: block; height: 100%; transition: width 0.3s ease; }
+  @media (prefers-reduced-motion: reduce) { .bar span { transition: none; } }
+
+  /* Work area */
+  .work { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 24px; align-items: start; }
+  @media (max-width: 760px) { .work { grid-template-columns: minmax(0, 1fr); } }
+
+  h2 {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 1.15rem;
+    margin: 0;
+  }
+
+  .entry {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  label { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+  input, select, button { font: inherit; color: inherit; }
+  input[type="text"], input[type="date"], select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: 0;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .formmsg { margin: 0; font-size: 0.85rem; color: var(--muted); min-height: 1.3em; }
+  .formmsg.err { color: var(--late); }
+
+  .listwrap { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .listhead { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+  ul.tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+  .task {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 6px 12px;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  @media (max-width: 520px) {
+    .task { grid-template-columns: minmax(0, 1fr) auto; }
+    .task .main { grid-column: 1 / -1; }
+  }
+  .task .main { min-width: 0; }
+  .task .name { font-weight: 600; overflow-wrap: anywhere; }
+  .task.is-done .name { text-decoration: line-through; color: var(--muted); }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.85rem; color: var(--muted); }
+  .meta .late { color: var(--late); font-weight: 600; }
+  .task select {
+    width: auto;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--c);
+    border-color: var(--c);
+    background: var(--surface);
+  }
+  .del {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .del:hover { border-color: var(--line); }
+  .del.armed { color: var(--late); border-color: var(--late); font-weight: 600; }
+  .empty { padding: 28px 0; color: var(--muted); border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Task Board</h1>
+    <p class="lede">Add a task, pick who owns it, and move it along.</p>
+  </header>
+
+  <div class="notice" id="notice">Tasks are saved in this browser only. Other people who open this link see their own list, not yours.</div>
+
+  <section class="summary" aria-label="Status summary">
+    <div class="counts">
+      <div class="count" style="--c: var(--todo)"><div class="num" id="n-todo">0</div><div class="lbl">To do</div></div>
+      <div class="count" style="--c: var(--doing)"><div class="num" id="n-doing">0</div><div class="lbl">In progress</div></div>
+      <div class="count" style="--c: var(--done)"><div class="num" id="n-done">0</div><div class="lbl">Done</div></div>
+    </div>
+    <div class="bar" role="img" id="bar" aria-label="No tasks yet">
+      <span id="b-todo" style="background: var(--todo); width: 0"></span>
+      <span id="b-doing" style="background: var(--doing); width: 0"></span>
+      <span id="b-done" style="background: var(--done); width: 0"></span>
+    </div>
+  </section>
+
+  <div class="work">
+    <form class="entry" id="entry" autocomplete="off">
+      <h2>Add a task</h2>
+      <div class="field">
+        <label for="f-title">Task</label>
+        <input type="text" id="f-title" maxlength="140" required placeholder="What needs doing?">
+      </div>
+      <div class="field">
+        <label for="f-owner">Owner</label>
+        <input type="text" id="f-owner" maxlength="60" placeholder="Who is on it?">
+      </div>
+      <div class="field">
+        <label for="f-due">Due date (optional)</label>
+        <input type="date" id="f-due">
+      </div>
+      <button type="submit" class="primary" id="f-add">Add task</button>
+      <p class="formmsg" id="formmsg" role="status"></p>
+    </form>
+
+    <section class="listwrap" aria-label="Tasks">
+      <div class="listhead">
+        <h2>Tasks</h2>
+        <div class="filters" id="filters">
+          <button type="button" class="chip" data-f="all" aria-pressed="true">All</button>
+          <button type="button" class="chip" data-f="todo" aria-pressed="false">To do</button>
+          <button type="button" class="chip" data-f="doing" aria-pressed="false">In progress</button>
+          <button type="button" class="chip" data-f="done" aria-pressed="false">Done</button>
+        </div>
+      </div>
+      <ul class="tasks" id="tasks"></ul>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  var STORE_KEY = "task-board.tasks";
+  var STATUS = [
+    { key: "todo", label: "To do" },
+    { key: "doing", label: "In progress" },
+    { key: "done", label: "Done" }
+  ];
+  var $ = function (id) { return document.getElementById(id); };
+
+  var tasks = load();
+  var filter = "all";
+  var armedId = null;      // task whose Delete button is waiting for a second click
+
+  function load() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(STORE_KEY));
+      return Array.isArray(saved) ? saved : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  function save() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(tasks));
+      return true;
+    } catch (e) {
+      setFormMsg("This browser is blocking storage, so tasks will be lost when you close the page.", true);
+      return false;
+    }
+  }
+
+  function label(key) {
+    for (var i = 0; i < STATUS.length; i++) if (STATUS[i].key === key) return STATUS[i].label;
+    return STATUS[0].label;
+  }
+  function statusOf(t) {
+    return t.status === "doing" || t.status === "done" ? t.status : "todo";
+  }
+  function todayStr() {
+    var d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function formatDue(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+    if (!m) return "";
+    return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+  function setFormMsg(text, isErr) {
+    var m = $("formmsg");
+    m.textContent = text || "";
+    m.className = "formmsg" + (isErr ? " err" : "");
+  }
+
+  function renderSummary() {
+    var c = { todo: 0, doing: 0, done: 0 };
+    tasks.forEach(function (t) { c[statusOf(t)]++; });
+    var total = tasks.length;
+    STATUS.forEach(function (s) {
+      $("n-" + s.key).textContent = c[s.key];
+      $("b-" + s.key).style.width = total ? (c[s.key] / total * 100) + "%" : "0";
+    });
+    $("bar").setAttribute("aria-label", total
+      ? c.todo + " to do, " + c.doing + " in progress, " + c.done + " done"
+      : "No tasks yet");
+  }
+
+  function emptyRow(text) {
+    var li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = text;
+    return li;
+  }
+
+  function renderList() {
+    var ul = $("tasks");
+    ul.textContent = "";
+    if (!tasks.length) { ul.appendChild(emptyRow("No tasks yet. Add the first one with the form.")); return; }
+    var shown = tasks.filter(function (t) { return filter === "all" || statusOf(t) === filter; });
+    if (!shown.length) { ul.appendChild(emptyRow("Nothing under " + label(filter) + " right now.")); return; }
+
+    var today = todayStr();
+    shown.forEach(function (t) {
+      var st = statusOf(t);
+      var li = document.createElement("li");
+      li.className = "task" + (st === "done" ? " is-done" : "");
+
+      var main = document.createElement("div");
+      main.className = "main";
+      var name = document.createElement("div");
+      name.className = "name";
+      name.textContent = t.title || "Untitled task";
+      main.appendChild(name);
+
+      var meta = document.createElement("div");
+      meta.className = "meta";
+      var owner = document.createElement("span");
+      owner.textContent = t.owner ? t.owner : "No owner";
+      meta.appendChild(owner);
+      var due = formatDue(t.due);
+      if (due) {
+        var d = document.createElement("span");
+        var late = st !== "done" && t.due < today;
+        d.textContent = (late ? "Overdue, was due " : "Due ") + due;
+        if (late) d.className = "late";
+        meta.appendChild(d);
+      }
+      main.appendChild(meta);
+      li.appendChild(main);
+
+      var sel = document.createElement("select");
+      sel.id = "status-" + t.id;
+      sel.setAttribute("aria-label", "Status of " + (t.title || "task"));
+      sel.style.setProperty("--c", "var(--" + st + ")");
+      STATUS.forEach(function (s) {
+        var o = document.createElement("option");
+        o.value = s.key;
+        o.textContent = s.label;
+        if (s.key === st) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener("change", function () { changeStatus(t.id, sel.value); });
+      li.appendChild(sel);
+
+      var del = document.createElement("button");
+      del.type = "button";
+      var armed = armedId === t.id;
+      del.className = "del" + (armed ? " armed" : "");
+      del.textContent = armed ? "Confirm delete" : "Delete";
+      del.addEventListener("click", function () { deleteTask(t.id); });
+      li.appendChild(del);
+
+      ul.appendChild(li);
+    });
+  }
+
+  function render() { renderSummary(); renderList(); }
+
+  function changeStatus(id, status) {
+    tasks.forEach(function (t) { if (t.id === id) t.status = status; });
+    if (save()) setFormMsg("");
+    render();
+  }
+
+  function deleteTask(id) {
+    if (armedId !== id) { armedId = id; render(); return; }
+    armedId = null;
+    tasks = tasks.filter(function (t) { return t.id !== id; });
+    if (save()) setFormMsg("Task deleted.");
+    render();
+  }
+
+  $("filters").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-f]");
+    if (!b) return;
+    filter = b.getAttribute("data-f");
+    Array.prototype.forEach.call(this.querySelectorAll("button"), function (x) {
+      x.setAttribute("aria-pressed", x === b ? "true" : "false");
+    });
+    renderList();
+  });
+
+  $("entry").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var title = $("f-title").value.trim();
+    if (!title) { setFormMsg("Give the task a name first.", true); $("f-title").focus(); return; }
+    tasks.unshift({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      title: title,
+      owner: $("f-owner").value.trim(),
+      due: $("f-due").value || "",
+      status: "todo",
+      createdAt: Date.now()
+    });
+    if (save()) setFormMsg("Task added.");
+    $("f-title").value = "";
+    $("f-due").value = "";
+    $("f-title").focus();
+    render();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
