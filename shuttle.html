@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shuttlecraft Goddard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Antonio:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
+  <script>
+    // An unofficial, non-commercial fan homage. All geometry, textures and sounds
+    // are generated in code below; nothing is taken from the shows.
+
+    // =====================================================================
+    // Settings (changed from the in-cabin menu, remembered on the headset)
+    // =====================================================================
+    const SETTING_DEFS = [
+      { key: 'moveSpeed', label: 'MOVE SPEED',     options: [['SLOW', 0.8], ['NORMAL', 1.5], ['FAST', 2.5]], initial: 1 },
+      { key: 'turn',      label: 'TURNING',        options: [['SNAP 30', 30], ['SNAP 45', 45], ['SMOOTH', 0]], initial: 1 },
+      { key: 'height',    label: 'HEIGHT ADJUST',  options: [['-40 CM', -0.4], ['-20 CM', -0.2], ['NONE', 0], ['+20 CM', 0.2], ['+40 CM', 0.4]], initial: 2 },
+      { key: 'warpTime',  label: 'WARP TRAVEL',    options: [['SHORT', 6], ['STANDARD', 12], ['LONG', 25]], initial: 1 },
+      { key: 'volume',    label: 'VOLUME',         options: [['OFF', 0], ['LOW', 0.3], ['MEDIUM', 0.6], ['HIGH', 1]], initial: 2 },
+      { key: 'voice',     label: 'COMPUTER VOICE', options: [['ON', true], ['OFF', false]], initial: 0 },
+      { key: 'lights',    label: 'CABIN LIGHTS',   options: [['DIM', 0.45], ['NORMAL', 1], ['BRIGHT', 1.5]], initial: 1 },
+      { key: 'stars',     label: 'STAR DENSITY',   options: [['LOW', 1500], ['MEDIUM', 3500], ['HIGH', 7000]], initial: 1 },
+      { key: 'alert',     label: 'ALERT STATUS',   options: [['NORMAL', false], ['RED ALERT', true]], initial: 0, transient: true }
+    ];
+    const settingIndex = {};
+    (function loadSettings() {
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem('shuttle-settings')) || {}; } catch (e) { /* no storage */ }
+      SETTING_DEFS.forEach((def) => {
+        const index = saved[def.key];
+        settingIndex[def.key] = (!def.transient && Number.isInteger(index) && def.options[index]) ? index : def.initial;
+      });
+    })();
+    function setting(key) {
+      const def = SETTING_DEFS.find((d) => d.key === key);
+      return def.options[settingIndex[key]][1];
+    }
+    function saveSettings() {
+      const out = {};
+      SETTING_DEFS.forEach((def) => { if (!def.transient) out[def.key] = settingIndex[def.key]; });
+      try { localStorage.setItem('shuttle-settings', JSON.stringify(out)); } catch (e) { /* no storage */ }
+    }
+
+    // =====================================================================
+    // Destinations
+    // =====================================================================
+    const SYSTEMS = [
+      {
+        name: 'EARTH', sub: 'SOL III  -  SECTOR 001', star: 'G2V YELLOW DWARF',
+        info: ['Homeworld of humanity and seat of the', 'United Federation of Planets.', 'Starfleet Command: San Francisco.'],
+        sun: { color: 0xfff2d6, dir: [0.55, 0.35, 0.75] }, skyTint: 0x8090c8,
+        planet: { type: 'terran', radius: 3600, sea: 0.53, ice: 0.84, deep: [8, 28, 88], shallow: [28, 100, 165],
+                  low: [48, 108, 52], high: [128, 108, 78], clouds: 0.5, atmo: 0x4a8cff },
+        moon: { type: 'rock', radius: 520, pos: [5600, 2100, -2500], tone: [150, 150, 150] }
+      },
+      {
+        name: 'VULCAN', sub: '40 ERIDANI A II', star: 'K1V ORANGE DWARF',
+        info: ['Arid, high-gravity world of logic.', 'A founding member of the Federation.', 'Sister world T\'Khut hangs in the sky.'],
+        sun: { color: 0xffc890, dir: [-0.5, 0.3, 0.8] }, skyTint: 0xb07860,
+        planet: { type: 'desert', radius: 3900, a: [128, 48, 26], b: [226, 150, 92], atmo: 0xff8a50 },
+        moon: { type: 'rock', radius: 1500, pos: [6500, 2600, -3500], tone: [170, 95, 60] }
+      },
+      {
+        name: 'ANDORIA', sub: 'PROCYON VIII-A  -  ICE MOON', star: 'F5 WHITE SUBGIANT',
+        info: ['Frozen moon of a ringed gas giant.', 'Its people live in cities beneath the ice.', 'A founding member of the Federation.'],
+        sun: { color: 0xeaf2ff, dir: [0.8, 0.25, 0.45] }, skyTint: 0x6090d0,
+        planet: { type: 'gas', radius: 4600, c1: [196, 168, 122], c2: [232, 218, 186], c3: [150, 118, 88], bands: 15, turb: 2.2,
+                  atmo: 0xd8c8a0, rings: { color: 0xd9ccb0, tilt: 0.35 } },
+        moon: { type: 'ice', radius: 900, pos: [2800, 900, -1500], tone: [225, 240, 250] }
+      },
+      {
+        name: 'RISA', sub: 'EPSILON CETI B II', star: 'BINARY  -  G AND K CLASS',
+        info: ['The pleasure planet. Weather control', 'keeps its tropical seas calm beneath', 'the light of two suns.'],
+        sun: { color: 0xfff0c8, dir: [0.2, 0.5, 0.85], twin: true }, skyTint: 0x70a0c0,
+        planet: { type: 'terran', radius: 3400, sea: 0.6, ice: 0.99, deep: [6, 60, 110], shallow: [48, 196, 190],
+                  low: [70, 150, 70], high: [200, 190, 140], clouds: 0.58, atmo: 0x58d0e8 },
+        moon: { type: 'rock', radius: 380, pos: [4800, 2500, -1500], tone: [190, 180, 160] }
+      },
+      {
+        name: 'QO\'NOS', sub: 'KLINGON HOMEWORLD', star: 'K7 ORANGE DWARF',
+        info: ['Capital of the Klingon Empire.', 'A storm-wracked world of dark seas', 'and a single great landmass.'],
+        sun: { color: 0xffa868, dir: [-0.85, 0.2, 0.35] }, skyTint: 0xa06848,
+        planet: { type: 'terran', radius: 3800, sea: 0.45, ice: 0.93, deep: [14, 38, 34], shallow: [38, 84, 64],
+                  low: [78, 92, 40], high: [96, 62, 40], clouds: 0.44, atmo: 0x9ab860 },
+        moon: { type: 'rock', radius: 620, pos: [5200, 1500, -2800], tone: [120, 105, 95] }
+      },
+      {
+        name: 'PAULSON NEBULA', sub: 'SECTOR 21305  -  ROGUE PLANET', star: 'NO PRIMARY  -  NEBULAR GLOW',
+        info: ['Dense interstellar cloud. Sensors are', 'unreliable here. A volcanic rogue', 'planet drifts through the gas.'],
+        sun: { color: 0xc8a8ff, dir: [0.3, 0.7, 0.6], dim: true }, skyTint: 0xff70d8, skyBoost: 3.2,
+        planet: { type: 'lava', radius: 3000, atmo: 0xff5020 },
+        moon: null
+      }
+    ];
+    const SHIP_HEADING = 2.5;   // the starship sits bow-on to where you arrive
+    const SHIP_CENTER = new THREE.Vector3(-42, -20, 56);
+    const PLANET_POS = new THREE.Vector3(-5200, -2600, -9500);
+
+    // =====================================================================
+    // Procedural noise and planet painters
+    // =====================================================================
+    const PERM = new Uint8Array(512);
+    const VALS = new Float32Array(256);
+    (function seedNoise() {
+      let s = 1701;
+      const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+      for (let i = 0; i < 256; i++) { PERM[i] = i; VALS[i] = rnd(); }
+      for (let i = 255; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        const t = PERM[i]; PERM[i] = PERM[j]; PERM[j] = t;
+      }
+      for (let i = 0; i < 256; i++) PERM[i + 256] = PERM[i];
+    })();
+    function noise3(x, y, z) {
+      let xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+      const xf = x - xi, yf = y - yi, zf = z - zi;
+      xi &= 255; yi &= 255; zi &= 255;
+      const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
+      const a = PERM[xi] + yi, b = PERM[xi + 1] + yi;
+      const aa = PERM[a] + zi, ab = PERM[a + 1] + zi, ba = PERM[b] + zi, bb = PERM[b + 1] + zi;
+      const c000 = VALS[PERM[aa]], c100 = VALS[PERM[ba]], c010 = VALS[PERM[ab]], c110 = VALS[PERM[bb]];
+      const c001 = VALS[PERM[aa + 1]], c101 = VALS[PERM[ba + 1]], c011 = VALS[PERM[ab + 1]], c111 = VALS[PERM[bb + 1]];
+      const x00 = c000 + u * (c100 - c000), x10 = c010 + u * (c110 - c010);
+      const x01 = c001 + u * (c101 - c001), x11 = c011 + u * (c111 - c011);
+      const y0 = x00 + v * (x10 - x00), y1 = x01 + v * (x11 - x01);
+      return y0 + w * (y1 - y0);
+    }
+    function fbm(x, y, z, octaves) {
+      let sum = 0, amp = 0.5, total = 0;
+      for (let i = 0; i < octaves; i++) {
+        sum += amp * noise3(x, y, z);
+        total += amp;
+        x *= 2.03; y *= 2.03; z *= 2.03;
+        amp *= 0.5;
+      }
+      return sum / total;
+    }
+    const clamp01 = (t) => (t < 0 ? 0 : t > 1 ? 1 : t);
+    const smooth = (a, b, t) => { t = clamp01((t - a) / (b - a)); return t * t * (3 - 2 * t); };
+
+    // Each painter writes one RGBA pixel for a point (x, y, z) on the unit sphere.
+    const PAINTERS = {
+      terran: (p) => (x, y, z, d, o) => {
+        const h = smooth(0.25, 0.75, fbm(x * 1.7 + 3, y * 1.7, z * 1.7, 6));
+        const cap = Math.abs(y) + (fbm(x * 5, y * 5, z * 5, 3) - 0.5) * 0.3;
+        let r, g, b;
+        if (cap > p.ice) {
+          r = 238; g = 244; b = 250;
+        } else if (h < p.sea) {
+          const t = Math.pow(h / p.sea, 3);
+          r = p.deep[0] + (p.shallow[0] - p.deep[0]) * t;
+          g = p.deep[1] + (p.shallow[1] - p.deep[1]) * t;
+          b = p.deep[2] + (p.shallow[2] - p.deep[2]) * t;
+        } else {
+          const t = clamp01((h - p.sea) / (1 - p.sea) * 1.8);
+          const dry = fbm(x * 4 + 9, y * 4, z * 4, 3);
+          r = p.low[0] + (p.high[0] - p.low[0]) * t + (dry - 0.5) * 60;
+          g = p.low[1] + (p.high[1] - p.low[1]) * t + (dry - 0.5) * 30;
+          b = p.low[2] + (p.high[2] - p.low[2]) * t;
+          if (t > 0.97) { r = g = b = 225; }
+        }
+        d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = 255;
+      },
+      desert: (p) => (x, y, z, d, o) => {
+        const h = smooth(0.25, 0.75, fbm(x * 2 + 5, y * 2, z * 2, 6));
+        const dark = smooth(0.55, 0.7, fbm(x * 4.5, y * 4.5 + 2, z * 4.5, 4));
+        const k = 1 - dark * 0.45;
+        d[o] = (p.a[0] + (p.b[0] - p.a[0]) * h) * k;
+        d[o + 1] = (p.a[1] + (p.b[1] - p.a[1]) * h) * k;
+        d[o + 2] = (p.a[2] + (p.b[2] - p.a[2]) * h) * k;
+        d[o + 3] = 255;
+      },
+      gas: (p) => (x, y, z, d, o) => {
+        const band = y * p.bands + (fbm(x * 2, y * 6, z * 2, 4) - 0.5) * p.turb * 2;
+        const s = Math.sin(band) * 0.5 + 0.5;
+        const detail = 0.82 + 0.36 * fbm(x * 3, y * 14, z * 3, 3);
+        const from = s < 0.5 ? p.c1 : p.c2, to = s < 0.5 ? p.c2 : p.c3, t = s < 0.5 ? s * 2 : s * 2 - 1;
+        d[o] = (from[0] + (to[0] - from[0]) * t) * detail;
+        d[o + 1] = (from[1] + (to[1] - from[1]) * t) * detail;
+        d[o + 2] = (from[2] + (to[2] - from[2]) * t) * detail;
+        d[o + 3] = 255;
+      },
+      ice: (p) => (x, y, z, d, o) => {
+        const h = fbm(x * 2.5, y * 2.5, z * 2.5, 5);
+        const crack = 1 - smooth(0, 0.07, Math.abs(fbm(x * 6 + 4, y * 6, z * 6, 4) - 0.5) * 2);
+        const k = 0.78 + 0.3 * h;
+        d[o] = p.tone[0] * k - crack * 110;
+        d[o + 1] = p.tone[1] * k - crack * 70;
+        d[o + 2] = p.tone[2] * k - crack * 30;
+        d[o + 3] = 255;
+      },
+      rock: (p) => (x, y, z, d, o) => {
+        const h = fbm(x * 4, y * 4, z * 4, 5);
+        const crater = smooth(0.6, 0.66, fbm(x * 9 + 2, y * 9, z * 9, 2));
+        const k = 0.45 + 0.8 * h - crater * 0.2;
+        d[o] = p.tone[0] * k; d[o + 1] = p.tone[1] * k; d[o + 2] = p.tone[2] * k; d[o + 3] = 255;
+      },
+      lava: () => (x, y, z, d, o) => {
+        const ridge = Math.abs(fbm(x * 3, y * 3, z * 3, 5) - 0.5) * 2;
+        const rock = 26 + 46 * fbm(x * 8, y * 8, z * 8, 3);
+        const glow = Math.pow(1 - smooth(0, 0.09, ridge), 1.5);
+        d[o] = rock + (255 - rock) * glow;
+        d[o + 1] = rock * 0.85 + (150 - rock * 0.85) * glow;
+        d[o + 2] = rock * 0.8 + (30 - rock * 0.8) * glow;
+        d[o + 3] = 255;
+      },
+      clouds: (p) => (x, y, z, d, o) => {
+        const n = fbm(x * 2.6 + 11, y * 4.2, z * 2.6, 6);
+        d[o] = d[o + 1] = d[o + 2] = 255;
+        d[o + 3] = 235 * smooth(p.clouds, p.clouds + 0.2, n);
+      },
+      nebula: () => (x, y, z, d, o) => {
+        const cloud = smooth(0.42, 0.78, fbm(x * 1.6, y * 1.6 + 5, z * 1.6, 5)) * 0.55;
+        const hue = fbm(x * 2.4 + 8, y * 2.4, z * 2.4, 3);
+        const band = Math.exp(-Math.pow((y + x * 0.35) * 3.2, 2)) * (0.1 + 0.2 * fbm(x * 7, y * 7, z * 7, 4));
+        d[o] = 255 * clamp01(cloud * (0.25 + 0.9 * hue) + band);
+        d[o + 1] = 255 * clamp01(cloud * 0.36 + band);
+        d[o + 2] = 255 * clamp01(cloud * (1.1 - 0.5 * hue) + band * 1.15);
+        d[o + 3] = 255;
+      }
+    };
+
+    // Textures are painted a few rows per frame so the headset never stalls.
+    const textureJobs = [];
+    function paintSphere(canvas, texture, painter, onDone) {
+      const w = canvas.width, h = canvas.height;
+      const cosPhi = new Float32Array(w), sinPhi = new Float32Array(w);
+      for (let i = 0; i < w; i++) {
+        const phi = 2 * Math.PI * (i + 0.5) / w;
+        cosPhi[i] = Math.cos(phi); sinPhi[i] = Math.sin(phi);
+      }
+      const ctx = canvas.getContext('2d');
+      textureJobs.push({ ctx, w, h, row: 0, cosPhi, sinPhi, painter, texture, onDone, img: ctx.createImageData(w, 1) });
+    }
+    function runTextureJobs(budgetMs) {
+      const stop = performance.now() + budgetMs;
+      while (textureJobs.length && performance.now() < stop) {
+        const job = textureJobs[0];
+        const theta = Math.PI * (job.row + 0.5) / job.h;
+        const y = Math.cos(theta), s = Math.sin(theta);
+        const data = job.img.data;
+        for (let i = 0; i < job.w; i++) {
+          job.painter(-job.cosPhi[i] * s, y, job.sinPhi[i] * s, data, i * 4);
+        }
+        job.ctx.putImageData(job.img, 0, job.row);
+        if (++job.row >= job.h) {
+          textureJobs.shift();
+          job.texture.needsUpdate = true;
+          if (job.onDone) job.onDone();
+        }
+      }
+    }
+    function canvasTexture(w, h) {
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 4;
+      return { canvas, texture, ctx: canvas.getContext('2d') };
+    }
+    function glowTexture(stops) {
+      const t = canvasTexture(256, 256);
+      const g = t.ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+      stops.forEach(([at, color]) => g.addColorStop(at, color));
+      t.ctx.fillStyle = g;
+      t.ctx.fillRect(0, 0, 256, 256);
+      return t.texture;
+    }
+
+    // =====================================================================
+    // Sound (all synthesised)
+    // =====================================================================
+    const sound = {
+      ctx: null, master: null, hum: null,
+      start: function () {
+        if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+        try {
+          const ctx = this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+          this.master = ctx.createGain();
+          this.master.gain.value = setting('volume');
+          this.master.connect(ctx.destination);
+          // Engine and life-support hum.
+          this.humFilter = ctx.createBiquadFilter();
+          this.humFilter.type = 'lowpass';
+          this.humFilter.frequency.value = 170;
+          const humGain = ctx.createGain();
+          humGain.gain.value = 0.22;
+          this.humFilter.connect(humGain).connect(this.master);
+          this.oscs = [[55, 'sawtooth'], [55.6, 'sawtooth'], [110.4, 'sine'], [82.5, 'triangle']].map(([f, type]) => {
+            const osc = ctx.createOscillator();
+            osc.type = type; osc.frequency.value = f; osc.baseFreq = f;
+            osc.connect(this.humFilter); osc.start();
+            return osc;
+          });
+          const air = ctx.createBufferSource();
+          air.buffer = this.noiseBuffer(2);
+          air.loop = true;
+          const airFilter = ctx.createBiquadFilter();
+          airFilter.type = 'bandpass'; airFilter.frequency.value = 500; airFilter.Q.value = 0.4;
+          const airGain = ctx.createGain();
+          airGain.gain.value = 0.035;
+          air.connect(airFilter).connect(airGain).connect(this.master);
+          air.start();
+        } catch (e) { this.ctx = null; }
+      },
+      noiseBuffer: function (seconds) {
+        const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * seconds, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+        return buffer;
+      },
+      setVolume: function () {
+        if (this.master) this.master.gain.setTargetAtTime(setting('volume'), this.ctx.currentTime, 0.1);
+      },
+      tone: function (type, from, to, duration, volume, delay) {
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime + (delay || 0);
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(from, t);
+        osc.frequency.exponentialRampToValueAtTime(to, t + duration);
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(volume, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+        osc.connect(gain).connect(this.master);
+        osc.start(t);
+        osc.stop(t + duration + 0.05);
+      },
+      key: function () { this.tone('sine', 1320, 1320, 0.07, 0.12); this.tone('sine', 1760, 1760, 0.09, 0.12, 0.07); },
+      deny: function () { this.tone('square', 220, 200, 0.25, 0.08); },
+      confirm: function () { [880, 1175, 1568].forEach((f, i) => this.tone('sine', f, f, 0.12, 0.12, i * 0.09)); },
+      klaxon: function () { this.tone('sawtooth', 420, 760, 0.55, 0.09); },
+      // level 0 = impulse hum, 1 = warp
+      engine: function (level, seconds) {
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        this.oscs.forEach((osc) => osc.frequency.setTargetAtTime(osc.baseFreq * (1 + level * 0.9), t, seconds / 3));
+        this.humFilter.frequency.setTargetAtTime(170 + level * 520, t, seconds / 3);
+      },
+      whoosh: function (rising) {
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer(2);
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass'; filter.Q.value = 1.2;
+        filter.frequency.setValueAtTime(rising ? 150 : 3000, t);
+        filter.frequency.exponentialRampToValueAtTime(rising ? 4000 : 120, t + 1.6);
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.5, t + (rising ? 1.4 : 0.1));
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 1.9);
+        src.connect(filter).connect(gain).connect(this.master);
+        src.start(t); src.stop(t + 2);
+        this.tone('sine', rising ? 60 : 140, rising ? 30 : 40, 1.2, 0.5, rising ? 1.4 : 0);
+      },
+      say: function (text) {
+        if (!setting('voice') || !setting('volume') || !window.speechSynthesis) return;
+        try {
+          const u = new SpeechSynthesisUtterance(text);
+          const voices = speechSynthesis.getVoices().filter((v) => v.lang && v.lang.indexOf('en') === 0);
+          const pick = voices.find((v) => /female|zira|samantha|aria|jenny/i.test(v.name)) || voices[0];
+          if (pick) u.voice = pick;
+          u.rate = 0.98; u.pitch = 1.05; u.volume = Math.min(1, setting('volume') + 0.2);
+          speechSynthesis.cancel();
+          speechSynthesis.speak(u);
+        } catch (e) { /* voice is optional */ }
+      }
+    };
+
+    // =====================================================================
+    // Okudagram-style touch panels drawn on canvases
+    // =====================================================================
+    const LC = { orange: '#ff9900', peach: '#ffcc99', lilac: '#cc99cc', violet: '#9999cc', red: '#cc6666',
+                 gold: '#ffcc66', blue: '#9999ff', sky: '#99ccff', white: '#ffffff', alert: '#ff3b2b', dark: '#000000' };
+    const FONT = "Antonio, 'Arial Narrow', Arial, sans-serif";
+
+    class Panel {
+      constructor(id, width, height, draw) {
+        const t = canvasTexture(Math.round(width * 1000), Math.round(height * 1000));
+        this.canvas = t.canvas; this.ctx = t.ctx; this.texture = t.texture;
+        this.w = this.canvas.width; this.h = this.canvas.height;
+        this.draw = draw;
+        this.buttons = [];
+        this.mesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(width, height),
+          new THREE.MeshBasicMaterial({ map: this.texture, toneMapped: false })
+        );
+        this.el = document.createElement('a-entity');
+        this.el.id = id;
+        this.el.classList.add('ui');
+        this.el.addEventListener('loaded', () => this.el.setObject3D('mesh', this.mesh));
+        this.el.addEventListener('click', (e) => {
+          const hit = e.detail && e.detail.intersection;
+          if (hit && hit.uv) this.press(hit.uv.x * this.w, (1 - hit.uv.y) * this.h, e.detail.cursorEl);
+        });
+      }
+      redraw() {
+        this.buttons.length = 0;
+        this.ctx.fillStyle = '#000';
+        this.ctx.fillRect(0, 0, this.w, this.h);
+        this.draw(this);
+        this.texture.needsUpdate = true;
+      }
+      text(str, x, y, size, color, align, weight) {
+        const ctx = this.ctx;
+        ctx.font = (weight || 700) + ' ' + size + 'px ' + FONT;
+        ctx.fillStyle = color;
+        ctx.textAlign = align || 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(str, x, y);
+      }
+      block(x, y, w, h, color, radii) {
+        const ctx = this.ctx;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, radii || 0);
+        ctx.fill();
+      }
+      // The signature curved corner bracket.
+      elbow(x, y, w, h, barW, barH, color, bottom) {
+        const outer = Math.min(barW, 90), inner = 34;
+        this.block(x, y, w, h, color, bottom ? [0, 0, 0, outer] : [outer, 0, 0, 0]);
+        if (bottom) this.block(x + barW, y - 2, w, h - barH + 2, '#000', [0, 0, 0, inner]);
+        else this.block(x + barW, y + barH, w, h, '#000', [inner, 0, 0, 0]);
+      }
+      button(x, y, w, h, label, color, onPress, size) {
+        this.block(x, y, w, h, color, h / 2);
+        this.text(label, x + w - h * 0.42, y + h * 0.5 + (size || h * 0.5) * 0.36, size || h * 0.5, '#000', 'right');
+        this.buttons.push({ x, y, w, h, onPress });
+      }
+      press(x, y, cursorEl) {
+        for (const b of this.buttons) {
+          if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+            pulse(cursorEl, 0.5, 30);
+            b.onPress();
+            return;
+          }
+        }
+      }
+    }
+    function pulse(hand, strength, ms) {
+      try {
+        const tracked = hand && hand.components && hand.components['tracked-controls'];
+        const pad = tracked && tracked.controller && tracked.controller.gamepad;
+        if (pad && pad.hapticActuators && pad.hapticActuators[0]) pad.hapticActuators[0].pulse(strength, ms);
+      } catch (e) { /* rumble is optional */ }
+    }
+
+    // =====================================================================
+    // The starship
+    // =====================================================================
+    function buildStarship(redrawList) {
+      const ship = new THREE.Group();
+
+      // Hull plating and lit windows.
+      const plating = canvasTexture(1024, 1024);
+      const lights = canvasTexture(1024, 1024);
+      (function () {
+        let s = 4242;
+        const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+        plating.ctx.fillStyle = '#d0d7dd';
+        plating.ctx.fillRect(0, 0, 1024, 1024);
+        for (let i = 0; i < 2600; i++) {
+          plating.ctx.fillStyle = rnd() < 0.5 ? 'rgba(255,255,255,' + (0.03 + rnd() * 0.05) + ')' : 'rgba(40,60,80,' + (0.02 + rnd() * 0.05) + ')';
+          plating.ctx.fillRect(Math.floor(rnd() * 64) * 16, Math.floor(rnd() * 128) * 8, 16 * (1 + Math.floor(rnd() * 3)), 8 * (1 + Math.floor(rnd() * 2)));
+        }
+        lights.ctx.fillStyle = '#000';
+        lights.ctx.fillRect(0, 0, 1024, 1024);
+        for (let row = 0; row < 46; row++) {
+          const y = 60 + Math.floor(rnd() * 900);
+          const density = 0.15 + rnd() * 0.35;
+          for (let x = 0; x < 1024; x += 5) {
+            if (rnd() < density) {
+              lights.ctx.fillStyle = rnd() < 0.8 ? '#fff6d8' : '#bfe0ff';
+              lights.ctx.fillRect(x, y, 2, 3);
+            }
+          }
+        }
+        plating.texture.needsUpdate = lights.texture.needsUpdate = true;
+        plating.texture.wrapS = lights.texture.wrapS = THREE.RepeatWrapping;
+      })();
+      const hull = new THREE.MeshStandardMaterial({ map: plating.texture, emissiveMap: lights.texture, emissive: 0xffffff,
+        emissiveIntensity: 1.2, roughness: 0.55, metalness: 0.2 });
+      const plain = new THREE.MeshStandardMaterial({ map: plating.texture, roughness: 0.55, metalness: 0.2 });
+      const glow = (color) => new THREE.MeshBasicMaterial({ color, toneMapped: false });
+      const add = (geometry, material, x, y, z) => {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(x || 0, y || 0, z || 0);
+        ship.add(mesh);
+        return mesh;
+      };
+      const profile = (pairs) => pairs.map(([r, y]) => new THREE.Vector2(r, y));
+
+      // Saucer section: 467 m across, slightly shorter than it is wide.
+      const saucer = add(new THREE.LatheGeometry(profile([
+        [0, -34], [14, -33], [26, -28], [40, -27], [90, -22], [150, -14], [200, -7], [228, -3], [233, 0],
+        [228, 4], [200, 10], [150, 17], [100, 23], [60, 27], [30, 30], [22, 36], [12, 39], [0, 40]
+      ]), 96), hull, 0, 0, -190);
+      saucer.scale.z = 0.87;
+
+      // Neck between the saucer and the engineering hull.
+      const neckShape = new THREE.Shape();
+      neckShape.moveTo(-125, -8); neckShape.lineTo(8, -4); neckShape.lineTo(75, -42); neckShape.lineTo(-85, -42);
+      neckShape.closePath();
+      const neck = new THREE.ExtrudeGeometry(neckShape, { depth: 52, bevelEnabled: false });
+      neck.rotateY(-Math.PI / 2);
+      neck.translate(26, 0, 0);
+      add(neck, plain);
+
+      // Engineering hull with the main deflector at the front.
+      const engineering = new THREE.LatheGeometry(profile([
+        [30, 0], [46, 12], [54, 50], [56, 110], [48, 190], [32, 250], [12, 290], [0, 300]
+      ]), 48);
+      engineering.rotateX(Math.PI / 2);
+      const secondary = new THREE.Group();
+      secondary.position.set(0, -62, -100);
+      secondary.scale.set(1.2, 0.8, 1);
+      secondary.add(new THREE.Mesh(engineering, hull));
+      const dish = new THREE.Mesh(new THREE.CircleGeometry(30.5, 48), new THREE.MeshBasicMaterial({
+        map: glowTexture([[0, '#fff0c0'], [0.3, '#ffa030'], [0.52, '#b04a10'], [0.6, '#1a3a70'], [0.8, '#49b4ff'], [1, '#2a6fd0']]),
+        toneMapped: false }));
+      dish.rotation.y = Math.PI;
+      dish.position.z = -0.4;
+      secondary.add(dish);
+      ship.add(secondary);
+
+      // Pylons and warp nacelles.
+      const nacelleGeo = new THREE.CapsuleGeometry(15, 234, 8, 24);
+      nacelleGeo.rotateX(Math.PI / 2);
+      const bussardGeo = new THREE.SphereGeometry(15.6, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+      bussardGeo.rotateX(-Math.PI / 2);
+      [-1, 1].forEach((side) => {
+        const pylon = add(new THREE.BoxGeometry(78, 7, 80), plain, side * 84, -47, 120);
+        pylon.rotation.z = side * 0.29;
+        add(nacelleGeo, plain, side * 120, -33, 115).scale.x = 1.25;
+        add(bussardGeo, glow(0xff3a22), side * 120, -33, 0).scale.x = 1.25;
+        add(new THREE.BoxGeometry(2.4, 7, 175), glow(0x6cc4ff), side * 120 + 18.6, -33, 125);
+        add(new THREE.BoxGeometry(2.4, 7, 175), glow(0x6cc4ff), side * 120 - 18.6, -33, 125);
+        add(new THREE.BoxGeometry(36, 5, 4), glow(0xff4a28), side * 72, 1, 3);
+      });
+      add(new THREE.BoxGeometry(34, 7, 4), glow(0xff4a28), 0, -14, 28);
+
+      // Registry on the forward saucer.
+      const registry = canvasTexture(1024, 256);
+      const drawRegistry = () => {
+        const ctx = registry.ctx;
+        ctx.clearRect(0, 0, 1024, 256);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#16181c';
+        ctx.font = '700 58px ' + FONT;
+        ctx.fillText('U.S.S.  ENTERPRISE', 512, 70);
+        ctx.font = '700 150px ' + FONT;
+        ctx.lineWidth = 7; ctx.strokeStyle = '#a02018';
+        ctx.strokeText('NCC-1701-D', 512, 222);
+        ctx.fillText('NCC-1701-D', 512, 222);
+        registry.texture.needsUpdate = true;
+      };
+      drawRegistry();
+      redrawList.push(drawRegistry);
+      const decal = add(new THREE.PlaneGeometry(150, 37.5), new THREE.MeshBasicMaterial({ map: registry.texture,
+        transparent: true, depthWrite: false, toneMapped: false }), 0, 16, -340);
+      decal.rotation.x = -Math.PI / 2 - 0.16;
+
+      // Running lights.
+      const blink = [
+        add(new THREE.SphereGeometry(2.6, 8, 6), glow(0xff2020), -233, 0, -190),
+        add(new THREE.SphereGeometry(2.6, 8, 6), glow(0x20ff40), 233, 0, -190),
+        add(new THREE.SphereGeometry(2.2, 8, 6), glow(0xffffff), 0, 41, -190),
+        add(new THREE.SphereGeometry(2.2, 8, 6), glow(0xffffff), 0, -100, 60)
+      ];
+      ship.userData.blink = blink;
+      return ship;
+    }
+
+    // =====================================================================
+    // The shuttle cabin
+    // =====================================================================
+    function buildCabin(sim) {
+      const cabin = new THREE.Group();
+      sim.cabinMats = [];
+      const paint = (color, glowAmount) => {
+        const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: glowAmount });
+        mat.userData.base = glowAmount;
+        sim.cabinMats.push(mat);
+        return mat;
+      };
+      const wall = paint(0xb5ab98, 0.3), trim = paint(0x4a4d57, 0.3), floor = paint(0x30343e, 0.3);
+      const ceiling = paint(0xcbc4b6, 0.3), seat = paint(0x86603c, 0.3), console = paint(0x15171c, 0.2);
+      const hullMat = new THREE.MeshStandardMaterial({ color: 0xdcdcd4, roughness: 0.6, metalness: 0.1 });
+      sim.stripMat = new THREE.MeshBasicMaterial({ color: 0xfff4dc, toneMapped: false });
+      const box = (w, h, d, x, y, z, mat) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        mesh.position.set(x, y, z);
+        cabin.add(mesh);
+        return mesh;
+      };
+
+      box(2.7, 0.05, 5.1, 0, -0.025, -0.1, floor);
+      box(2.7, 0.05, 5.1, 0, 2.175, -0.1, ceiling);
+      box(0.14, 0.02, 3.6, -0.6, 2.14, 0, sim.stripMat);
+      box(0.14, 0.02, 3.6, 0.6, 2.14, 0, sim.stripMat);
+
+      [-1, 1].forEach((s) => {
+        const x = s * 1.325;
+        box(0.05, 1.0, 5.1, x, 0.5, -0.1, wall);          // below the side window
+        box(0.05, 0.35, 5.1, x, 1.975, -0.1, wall);       // above it
+        box(0.05, 0.8, 2.9, x, 1.4, 0.95, wall);          // solid aft wall
+        box(0.05, 0.8, 0.35, x, 1.4, -2.425, wall);       // forward pillar
+        box(0.07, 0.06, 1.8, x, 1.0, -1.375, trim);       // window sill
+        box(0.07, 0.8, 0.06, x, 1.4, -0.5, trim);         // window frame
+        box(0.06, 0.8, 0.06, s * 0.5, 1.5, -2.625, trim); // windshield mullion
+
+        // Pilot seats.
+        const sx = s * 0.6;
+        const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.16, 0.4, 16), trim);
+        pedestal.position.set(sx, 0.2, -1.5);
+        cabin.add(pedestal);
+        box(0.52, 0.1, 0.5, sx, 0.45, -1.5, seat);
+        box(0.5, 0.62, 0.1, sx, 0.8, -1.24, seat).rotation.x = 0.12;
+        box(0.3, 0.2, 0.09, sx, 1.2, -1.2, seat);
+        box(0.06, 0.05, 0.4, sx - 0.29, 0.66, -1.48, trim);
+        box(0.06, 0.05, 0.4, sx + 0.29, 0.66, -1.48, trim);
+
+        // Aft benches.
+        box(0.45, 0.42, 1.8, s * 1.07, 0.21, 1.3, trim);
+        box(0.45, 0.07, 1.8, s * 1.07, 0.45, 1.3, seat);
+        box(0.08, 0.5, 1.8, s * 1.27, 0.76, 1.3, seat);
+
+        // Outside: the engine pods you see below the side windows.
+        box(0.5, 0.4, 4.8, s * 1.75, 0.5, 0.1, hullMat);
+        box(0.04, 0.16, 3.2, s * 2.0, 0.55, 0.3, new THREE.MeshBasicMaterial({ color: 0x66c0ff, toneMapped: false }));
+      });
+
+      // Front wall, windshield frame and console.
+      box(2.7, 1.1, 0.05, 0, 0.55, -2.625, wall);
+      box(2.7, 0.25, 0.05, 0, 2.025, -2.625, wall);
+      box(2.7, 0.06, 0.08, 0, 1.1, -2.6, trim);
+      box(2.7, 0.14, 0.6, 0, 0.9, -2.33, console);
+      box(2.7, 0.83, 0.05, 0, 0.415, -2.05, trim);
+
+      // Aft wall and hatch.
+      box(2.7, 2.15, 0.05, 0, 1.075, 2.425, wall);
+      box(1.2, 1.9, 0.03, 0, 0.95, 2.39, trim);
+      box(1.08, 1.78, 0.03, 0, 0.95, 2.375, ceiling);
+      box(0.03, 1.78, 0.035, 0, 0.95, 2.372, trim);
+
+      // Trim: ceiling ribs, wall ribs, skirting and the console's accent strips.
+      [-1.6, -0.45, 0.2, 1.7].forEach((z) => box(2.64, 0.05, 0.08, 0, 2.13, z, trim));
+      [-1, 1].forEach((s) => {
+        [0.2, 1.7, 2.36].forEach((z) => box(0.03, 0.8, 0.06, s * 1.29, 1.4, z, trim));
+        box(0.03, 0.1, 5.0, s * 1.29, 0.05, -0.1, trim);
+        box(0.03, 0.04, 2.9, s * 1.29, 1.02, 0.95, trim);
+      });
+      const accent = (color) => new THREE.MeshBasicMaterial({ color, toneMapped: false });
+      box(0.5, 0.035, 0.02, -1.0, 0.9, -2.025, accent(0xff9900));
+      box(0.5, 0.035, 0.02, 1.0, 0.9, -2.025, accent(0xcc99cc));
+      box(1.3, 0.035, 0.02, 0, 0.9, -2.025, accent(0x9999cc));
+
+      // Outside: the nose below the windshield.
+      const nose = box(2.3, 0.5, 1.5, 0, 0.72, -3.4, hullMat);
+      nose.rotation.x = 0.16;
+
+      sim.cabinLight = new THREE.PointLight(0xfff0dc, 3, 9, 1.6);
+      sim.cabinLight.position.set(0, 1.45, 0);
+      cabin.add(sim.cabinLight);
+      sim.alertLight = new THREE.PointLight(0xff1a00, 0, 9, 1.6);
+      sim.alertLight.position.set(0, 1.85, -0.5);
+      cabin.add(sim.alertLight);
+      return cabin;
+    }
+
+    // =====================================================================
+    // Walking around the cabin (left stick moves, right stick turns)
+    // =====================================================================
+    AFRAME.registerComponent('cabin-move', {
+      init: function () {
+        this.move = { x: 0, y: 0 };
+        this.turn = 0;
+        this.turnLatched = false;
+        this.head = new THREE.Vector3();
+        this.after = new THREE.Vector3();
+        this.forward = new THREE.Vector3();
+        document.querySelector('#leftHand').addEventListener('thumbstickmoved', (e) => { this.move = e.detail; });
+        document.querySelector('#rightHand').addEventListener('thumbstickmoved', (e) => { this.turn = e.detail.x; });
+      },
+      rotate: function (radians) {
+        const rig = this.el.object3D, camera = this.el.sceneEl.camera;
+        camera.getWorldPosition(this.head);
+        rig.rotation.y += radians;
+        rig.updateMatrixWorld(true);
+        camera.getWorldPosition(this.after);
+        rig.position.x += this.head.x - this.after.x;
+        rig.position.z += this.head.z - this.after.z;
+      },
+      teleport: function (x, z) {
+        const rig = this.el.object3D;
+        this.el.sceneEl.camera.getWorldPosition(this.head);
+        rig.position.x += x - this.head.x;
+        rig.position.z += z - this.head.z;
+      },
+      tick: function (time, delta) {
+        const dt = Math.min(delta, 100) / 1000;
+        const rig = this.el.object3D, camera = this.el.sceneEl.camera;
+        rig.position.y = setting('height');
+
+        const snap = setting('turn');
+        if (snap) {
+          if (Math.abs(this.turn) > 0.7 && !this.turnLatched) {
+            this.turnLatched = true;
+            this.rotate(-Math.sign(this.turn) * snap * Math.PI / 180);
+          } else if (Math.abs(this.turn) < 0.3) {
+            this.turnLatched = false;
+          }
+        } else if (Math.abs(this.turn) > 0.15) {
+          this.rotate(-this.turn * 1.6 * dt);
+        }
+
+        if (Math.abs(this.move.x) > 0.15 || Math.abs(this.move.y) > 0.15) {
+          camera.getWorldDirection(this.forward);
+          this.forward.y = 0;
+          this.forward.normalize();
+          const speed = setting('moveSpeed') * dt;
+          rig.position.x += (this.forward.x * -this.move.y - this.forward.z * this.move.x) * speed;
+          rig.position.z += (this.forward.z * -this.move.y + this.forward.x * this.move.x) * speed;
+        }
+
+        // Keep your head inside the cabin walls.
+        rig.updateMatrixWorld(true);
+        camera.getWorldPosition(this.head);
+        rig.position.x += Math.max(-1.05, Math.min(1.05, this.head.x)) - this.head.x;
+        rig.position.z += Math.max(-1.95, Math.min(2.1, this.head.z)) - this.head.z;
+      }
+    });
+
+    // The pointer beam only shows while it is aimed at a panel. B or Y opens the menu.
+    AFRAME.registerComponent('pointer-hand', {
+      init: function () {
+        const el = this.el;
+        el.addEventListener('raycaster-intersection', () => el.setAttribute('line', 'visible', true));
+        el.addEventListener('raycaster-intersection-cleared', () => {
+          if (!el.components.raycaster.intersectedEls.length) el.setAttribute('line', 'visible', false);
+        });
+        const toggle = () => el.sceneEl.components['shuttle-sim'].toggleMenu();
+        el.addEventListener('bbuttondown', toggle);
+        el.addEventListener('ybuttondown', toggle);
+      }
+    });
+
+    // =====================================================================
+    // The simulation
+    // =====================================================================
+    AFRAME.registerComponent('shuttle-sim', {
+      init: function () {
+        this.ready = false;
+        if (this.el.hasLoaded) this.build(); else this.el.addEventListener('loaded', () => this.build());
+      },
+
+      build: function () {
+        const scene = this.el.object3D;
+        this.redrawList = [];
+        this.current = 0;
+        this.selected = 1;
+        this.state = 'impulse';      // impulse | spool | cruise | drop
+        this.stateTime = 0;
+        this.mode = 'hold';          // hold | flyby | orbit
+        this.ease = 1;
+        this.angle = 0;
+        this.clock = 0;
+        this.status = 'HOLDING STATION';
+        this.menuOpen = false;
+        this.shipArrival = -1;
+        this.pendingTextures = 0;
+        this.klaxonTimer = 0;
+        this.lastSecond = -1;
+
+        // --- space: everything outside moves, the cabin stays put ---
+        this.space = new THREE.Group();
+        this.sky = new THREE.Group();
+        scene.add(this.space, this.sky);
+        this.pos = new THREE.Vector3(300, 60, 620);
+        this.quat = new THREE.Quaternion();
+        this.wantPos = this.pos.clone();
+        this.wantQuat = new THREE.Quaternion();
+        this.holdPos = this.pos.clone();
+        this.holdQuat = new THREE.Quaternion();
+        this.lookMatrix = new THREE.Matrix4();
+        this.v1 = new THREE.Vector3(); this.v2 = new THREE.Vector3(); this.v3 = new THREE.Vector3();
+        this.inverse = new THREE.Quaternion();
+        this.lookFrom(this.pos, this.v1.copy(SHIP_CENTER), this.v2.set(0, 1, 0), this.quat);
+        this.holdQuat.copy(this.quat);
+
+        // --- sky: nebula, stars, suns (rotates with the ship, never gets closer) ---
+        const nebula = canvasTexture(1024, 512);
+        this.skyMat = new THREE.MeshBasicMaterial({ map: nebula.texture, side: THREE.BackSide, depthWrite: false, color: 0x000000 });
+        const skyMesh = new THREE.Mesh(new THREE.SphereGeometry(50000, 48, 32), this.skyMat);
+        skyMesh.renderOrder = -10;
+        this.sky.add(skyMesh);
+        this.skyReady = false;
+        paintSphere(nebula.canvas, nebula.texture, PAINTERS.nebula(), () => { this.skyReady = true; this.applySky(); });
+        this.buildStars();
+        const sunTex = glowTexture([[0, 'rgba(255,255,255,1)'], [0.08, 'rgba(255,255,255,1)'], [0.16, 'rgba(255,255,255,0.45)'],
+          [0.4, 'rgba(255,255,255,0.1)'], [1, 'rgba(255,255,255,0)']]);
+        const sunSprite = () => {
+          const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, blending: THREE.AdditiveBlending,
+            depthWrite: false, transparent: true, toneMapped: false }));
+          this.sky.add(sprite);
+          return sprite;
+        };
+        this.sun = sunSprite();
+        this.sun2 = sunSprite();
+
+        // --- lighting ---
+        this.sunLight = new THREE.DirectionalLight(0xffffff, 3);
+        this.space.add(this.sunLight, this.sunLight.target);
+        scene.add(new THREE.AmbientLight(0x8090b0, 0.35));
+
+        // --- the system: starship, planet, rings, moon ---
+        this.system = new THREE.Group();
+        this.space.add(this.system);
+        this.ship = buildStarship(this.redrawList);
+        const shipHolder = new THREE.Group();
+        shipHolder.rotation.y = SHIP_HEADING;
+        shipHolder.add(this.ship);
+        this.system.add(shipHolder);
+        this.arrivalFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, blending: THREE.AdditiveBlending,
+          depthWrite: false, transparent: true, opacity: 0, toneMapped: false, color: 0xbfdcff }));
+        this.arrivalFlash.scale.setScalar(2200);
+        this.arrivalFlash.position.copy(SHIP_CENTER);
+        this.system.add(this.arrivalFlash);
+
+        const sphere = new THREE.SphereGeometry(1, 96, 64);
+        this.planetTex = canvasTexture(1024, 512);
+        this.cloudTex = canvasTexture(512, 256);
+        this.moonTex = canvasTexture(512, 256);
+        this.planet = new THREE.Mesh(sphere, new THREE.MeshLambertMaterial({ map: this.planetTex.texture, emissiveMap: this.planetTex.texture }));
+        this.clouds = new THREE.Mesh(sphere, new THREE.MeshLambertMaterial({ map: this.cloudTex.texture, transparent: true, depthWrite: false }));
+        this.clouds.scale.setScalar(1.012);
+        this.atmo = new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({ side: THREE.BackSide, transparent: true, opacity: 0.3,
+          blending: THREE.AdditiveBlending, depthWrite: false }));
+        this.atmo.scale.setScalar(1.035);
+        const ringGeo = new THREE.RingGeometry(1.35, 2.4, 128, 1);
+        const ringPos = ringGeo.attributes.position, ringUv = ringGeo.attributes.uv;
+        for (let i = 0; i < ringPos.count; i++) {
+          const r = Math.hypot(ringPos.getX(i), ringPos.getY(i));
+          ringUv.setXY(i, (r - 1.35) / 1.05, 0.5);
+        }
+        const ringTex = canvasTexture(512, 4);
+        (function () {
+          let s = 77;
+          const rnd = () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+          let alpha = 0.5;
+          for (let x = 0; x < 512; x++) {
+            alpha = clamp01(alpha + (rnd() - 0.5) * 0.25);
+            const gap = (x > 250 && x < 272) ? 0.05 : 1;
+            ringTex.ctx.fillStyle = 'rgba(255,255,255,' + (alpha * gap * smooth(0, 30, x) * smooth(512, 470, x)) + ')';
+            ringTex.ctx.fillRect(x, 0, 1, 4);
+          }
+          ringTex.texture.needsUpdate = true;
+        })();
+        this.rings = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ map: ringTex.texture, transparent: true,
+          side: THREE.DoubleSide, depthWrite: false }));
+        this.planetGroup = new THREE.Group();
+        this.planetGroup.position.copy(PLANET_POS);
+        this.planetGroup.add(this.planet, this.clouds, this.atmo, this.rings);
+        this.moon = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), new THREE.MeshLambertMaterial({ map: this.moonTex.texture }));
+        this.planetGroup.add(this.moon);
+        this.system.add(this.planetGroup);
+
+        // --- warp effect (lives in the cabin's frame) ---
+        this.streakCount = 520;
+        this.streakZ = new Float32Array(this.streakCount);
+        const streakPos = new Float32Array(this.streakCount * 6), streakCol = new Float32Array(this.streakCount * 6);
+        for (let i = 0; i < this.streakCount; i++) {
+          const a = Math.random() * Math.PI * 2, r = 7 + Math.pow(Math.random(), 1.6) * 170;
+          streakPos[i * 6] = streakPos[i * 6 + 3] = Math.cos(a) * r;
+          streakPos[i * 6 + 1] = streakPos[i * 6 + 4] = Math.sin(a) * r + 1.4;
+          this.streakZ[i] = -1400 + Math.random() * 1650;
+          const tint = Math.random();
+          streakCol.set([0.7 + 0.3 * tint, 0.8 + 0.2 * tint, 1, 0.15, 0.25, 0.6], i * 6);
+        }
+        const streakGeo = new THREE.BufferGeometry();
+        streakGeo.setAttribute('position', new THREE.BufferAttribute(streakPos, 3));
+        streakGeo.setAttribute('color', new THREE.BufferAttribute(streakCol, 3));
+        this.streaks = new THREE.LineSegments(streakGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true,
+          opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+        this.streaks.frustumCulled = false;
+        this.streaks.visible = false;
+        scene.add(this.streaks);
+        this.warpCore = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTex, color: 0x9cc8ff, blending: THREE.AdditiveBlending,
+          depthWrite: false, transparent: true, opacity: 0, toneMapped: false }));
+        this.warpCore.position.set(0, 1.4, -4000);
+        this.warpCore.scale.setScalar(2600);
+        scene.add(this.warpCore);
+        this.flash = new THREE.Mesh(new THREE.SphereGeometry(30, 16, 12), new THREE.MeshBasicMaterial({ color: 0xdcecff,
+          side: THREE.BackSide, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+        this.flash.visible = false;
+        scene.add(this.flash);
+        this.flashLevel = 0;
+
+        // --- cabin and panels ---
+        scene.add(buildCabin(this));
+        this.buildPanels();
+        this.applySettings();
+        this.loadSystem(0);
+
+        if (document.fonts && document.fonts.load) {
+          Promise.all([document.fonts.load('700 40px Antonio'), document.fonts.load('400 40px Antonio')])
+            .then(() => { this.redrawAll(); this.redrawList.forEach((fn) => fn()); })
+            .catch(() => {});
+        }
+        const wake = () => {
+          const first = !sound.ctx;
+          sound.start();
+          if (first && sound.ctx) setTimeout(() => sound.say('Welcome aboard the shuttlecraft Goddard.'), 600);
+        };
+        this.el.addEventListener('enter-vr', wake);
+        window.addEventListener('pointerdown', wake);
+        window.addEventListener('keydown', (e) => { if (e.key === 'm') this.toggleMenu(); });
+        this.ready = true;
+      },
+
+      lookFrom: function (eye, target, up, out) {
+        this.lookMatrix.lookAt(eye, target, up);
+        out.setFromRotationMatrix(this.lookMatrix);
+      },
+
+      buildStars: function () {
+        if (this.stars) this.stars.forEach((s) => { this.sky.remove(s); s.geometry.dispose(); s.material.dispose(); });
+        const make = (count, size) => {
+          const pos = new Float32Array(count * 3), col = new Float32Array(count * 3);
+          const v = new THREE.Vector3();
+          for (let i = 0; i < count; i++) {
+            v.randomDirection().multiplyScalar(45000);
+            pos.set([v.x, v.y, v.z], i * 3);
+            const b = 0.35 + Math.random() * 0.65, warm = Math.random();
+            col.set([b * (0.8 + 0.2 * warm), b * 0.9, b * (1 - 0.2 * warm)], i * 3);
+          }
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+          geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+          const points = new THREE.Points(geo, new THREE.PointsMaterial({ size, sizeAttenuation: false, vertexColors: true,
+            transparent: true, depthWrite: false, toneMapped: false }));
+          points.frustumCulled = false;
+          this.sky.add(points);
+          return points;
+        };
+        const count = setting('stars');
+        this.stars = [make(count, 1.6), make(Math.round(count / 7), 3)];
+      },
+
+      applySky: function () {
+        const sys = SYSTEMS[this.current];
+        if (this.skyReady) this.skyMat.color.set(sys.skyTint).multiplyScalar(sys.skyBoost || 1.3);
+      },
+
+      // Point everything at a new star system and repaint its worlds.
+      loadSystem: function (index) {
+        const sys = SYSTEMS[index], p = sys.planet;
+        this.current = index;
+        const dir = this.v1.set(sys.sun.dir[0], sys.sun.dir[1], sys.sun.dir[2]).normalize();
+        this.sunLight.position.copy(dir).multiplyScalar(1000);
+        this.sunLight.color.set(sys.sun.color);
+        this.sunLight.intensity = sys.sun.dim ? 1.4 : 3;
+        this.sun.position.copy(dir).multiplyScalar(40000);
+        this.sun.scale.setScalar(sys.sun.dim ? 9000 : 15000);
+        this.sun.material.color.set(sys.sun.color);
+        this.sun2.visible = !!sys.sun.twin;
+        this.sun2.position.copy(dir).multiplyScalar(40000).add(this.v2.set(5200, -1800, 0));
+        this.sun2.scale.setScalar(8000);
+        this.sun2.material.color.set(0xffb070);
+        this.applySky();
+
+        this.planetGroup.visible = false;
+        this.planet.scale.setScalar(p.radius);
+        this.planet.material.emissive.set(p.type === 'lava' ? 0xffffff : 0x000000);
+        this.clouds.visible = !!p.clouds;
+        this.clouds.scale.setScalar(p.radius * 1.012);
+        this.atmo.scale.setScalar(p.radius * 1.035);
+        this.atmo.material.color.set(p.atmo);
+        this.rings.visible = !!p.rings;
+        if (p.rings) {
+          this.rings.scale.setScalar(p.radius);
+          this.rings.rotation.set(Math.PI / 2 - p.rings.tilt, 0.2, 0);
+          this.rings.material.color.set(p.rings.color);
+        }
+        this.moon.visible = !!sys.moon;
+
+        this.pendingTextures = 0;
+        const paint = (tex, painter) => {
+          this.pendingTextures++;
+          paintSphere(tex.canvas, tex.texture, painter, () => {
+            if (--this.pendingTextures === 0) this.planetGroup.visible = true;
+          });
+        };
+        paint(this.planetTex, PAINTERS[p.type](p));
+        if (p.clouds) paint(this.cloudTex, PAINTERS.clouds(p));
+        if (sys.moon) {
+          this.moon.scale.setScalar(sys.moon.radius);
+          this.moon.position.set(sys.moon.pos[0], sys.moon.pos[1], sys.moon.pos[2]);
+          paint(this.moonTex, PAINTERS[sys.moon.type](sys.moon));
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // Panels
+      // ------------------------------------------------------------------
+      buildPanels: function () {
+        const place = (panel, position, rotation, parent) => {
+          panel.el.setAttribute('position', position);
+          panel.el.setAttribute('rotation', rotation);
+          (parent || this.el).appendChild(panel.el);
+          panel.redraw();
+          return panel;
+        };
+
+        // Helm, on the forward console.
+        this.helm = place(new Panel('helm', 1.5, 0.56, (p) => {
+          const warp = this.state !== 'impulse';
+          p.elbow(0, 0, p.w, 150, 150, 40, LC.orange);
+          p.block(0, 158, 150, 120, LC.lilac); p.block(0, 286, 150, 120, LC.violet);
+          p.block(0, 414, 150, 146, LC.peach, [0, 0, 0, 70]);
+          p.block(1180, 0, 320, 40, '#000');
+          p.text('HELM  05', 1495, 36, 42, LC.orange, 'right');
+          p.text('47-1701', 140, 140, 26, '#000', 'right'); p.text('05-2364', 140, 268, 26, '#000', 'right');
+          p.text('NAV-362', 140, 396, 26, '#000', 'right'); p.text('IMP-88', 140, 545, 26, '#000', 'right');
+          p.text('SHUTTLECRAFT GODDARD   -   NAVIGATION', 190, 98, 38, LC.orange);
+
+          SYSTEMS.forEach((sys, i) => {
+            const x = 190 + (i % 2) * 372, y = 124 + Math.floor(i / 2) * 84;
+            const color = i === this.current ? LC.blue : i === this.selected ? LC.white : (i % 2 ? LC.peach : LC.gold);
+            p.button(x, y, 356, 70, sys.name + (i === this.current ? '  -  HERE' : ''), color, () => this.selectDestination(i), 34);
+          });
+
+          p.button(950, 124, 530, 154, warp ? 'AT WARP' : 'ENGAGE', warp ? LC.alert : LC.orange, () => this.engage(), 84);
+          [['HOLD', 'hold'], ['FLYBY', 'flyby'], ['ORBIT', 'orbit']].forEach(([label, mode], i) => {
+            p.button(950 + i * 180, 292, 170, 70, label, (!warp && this.mode === mode) ? LC.white : LC.sky, () => this.setMode(mode), 34);
+          });
+
+          p.text('LOCATION:  ' + (warp ? 'IN TRANSIT' : SYSTEMS[this.current].name), 190, 430, 38, LC.sky);
+          p.text('COURSE:  ' + SYSTEMS[this.selected].name, 190, 480, 38, LC.peach);
+          p.text(this.status, 190, 536, 40, warp ? LC.alert : LC.orange);
+          p.button(1250, 456, 230, 80, 'MENU', LC.lilac, () => this.toggleMenu(), 40);
+        }), '0 1.15 -2.31', '-58 0 0');
+
+        // System information, port wall.
+        this.infoPanel = place(new Panel('info', 1.3, 0.65, (p) => {
+          const sys = SYSTEMS[this.state === 'impulse' ? this.current : this.selected];
+          p.elbow(0, 0, p.w, 190, 120, 34, LC.gold);
+          p.block(0, 198, 120, 200, LC.blue);
+          p.elbow(0, 406, p.w, 244, 120, 34, LC.red, true);
+          p.block(900, 0, 400, 34, '#000');
+          p.text(this.state === 'impulse' ? 'STELLAR CARTOGRAPHY' : 'DESTINATION', 1295, 32, 38, LC.gold, 'right');
+          p.text(sys.name, 160, 150, 104, LC.orange);
+          p.text(sys.sub, 160, 208, 40, LC.sky, 'left', 400);
+          sys.info.forEach((line, i) => p.text(line, 160, 282 + i * 52, 38, LC.peach, 'left', 400));
+          p.text('PRIMARY:  ' + sys.star, 160, 470, 34, LC.lilac);
+          p.text('STARDATE  ' + (47634.4 + this.clock / 4000).toFixed(1), 160, 520, 34, LC.lilac);
+          p.text('RADIUS  ' + (sys.planet.radius * 1.77).toFixed(0) + ' KM', 760, 470, 34, LC.violet);
+          p.text('ESCORT:  U.S.S. ENTERPRISE', 760, 520, 34, LC.violet);
+        }), '-1.295 1.42 0.95', '0 90 0');
+
+        // Starship schematic, starboard wall.
+        this.shipPanel = place(new Panel('schematic', 1.3, 0.65, (p) => {
+          const ctx = p.ctx;
+          p.elbow(0, 0, p.w, 150, 110, 34, LC.violet);
+          p.block(0, 158, 110, 240, LC.peach);
+          p.elbow(0, 406, p.w, 244, 110, 34, LC.orange, true);
+          p.block(820, 0, 480, 34, '#000');
+          p.text('GALAXY CLASS  -  NCC-1701-D', 1295, 32, 38, LC.violet, 'right');
+          ctx.save();
+          ctx.translate(250, 330);
+          ctx.lineWidth = 3;
+          const shape = (fill, stroke, path) => { ctx.beginPath(); path(); ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = stroke; ctx.stroke(); };
+          [-1, 1].forEach((s) => {
+            shape('#3b3550', LC.lilac, () => { ctx.moveTo(430, s * 40); ctx.lineTo(500, s * 40); ctx.lineTo(540, s * 108); ctx.lineTo(470, s * 108); ctx.closePath(); });
+            shape('#27324d', LC.sky, () => ctx.roundRect(378, s * 120 - 23, 264, 46, 23));
+            shape(LC.alert, LC.alert, () => ctx.roundRect(378, s * 120 - 20, 30, 40, 18));
+          });
+          shape('#2a2f45', LC.peach, () => ctx.ellipse(445, 0, 150, 62, 0, 0, Math.PI * 2));
+          shape('#2a2f45', LC.peach, () => ctx.ellipse(205, 0, 203, 233, 0, 0, Math.PI * 2));
+          shape('#1b2033', LC.gold, () => ctx.ellipse(205, 0, 150, 172, 0, 0, Math.PI * 2));
+          shape('#2a2f45', LC.gold, () => ctx.ellipse(205, 0, 60, 68, 0, 0, Math.PI * 2));
+          shape(LC.orange, LC.orange, () => ctx.ellipse(205, 0, 16, 16, 0, 0, Math.PI * 2));
+          ctx.restore();
+          [['LENGTH', '642 M'], ['BEAM', '467 M'], ['DECKS', '42'], ['CREW', '1,014'], ['MAX WARP', '9.6'], ['SHUTTLEBAYS', '3']].forEach(([k, v], i) => {
+            p.text(k, 960, 190 + i * 58, 32, LC.sky, 'left', 400);
+            p.text(v, 1280, 190 + i * 58, 36, LC.orange, 'right');
+          });
+          p.text('U.S.S. ENTERPRISE', 150, 100, 60, LC.orange);
+          p.text('MASTER SYSTEMS DISPLAY  -  ALL DECKS NOMINAL', 150, 615, 30, LC.peach, 'left', 400);
+        }), '1.295 1.42 0.95', '0 -90 0');
+
+        // Floating settings menu.
+        this.menu = new Panel('menu', 1.2, 0.95, (p) => {
+          p.elbow(0, 0, p.w, 120, 44, 54, LC.orange);
+          p.block(520, 0, 680, 54, '#000');
+          p.text('SHUTTLE SETTINGS', 1195, 48, 54, LC.orange, 'right');
+          p.text('B OR Y BUTTON OPENS AND CLOSES THIS MENU', 70, 104, 30, LC.sky, 'left', 400);
+          SETTING_DEFS.forEach((def, i) => {
+            const x = 70 + (i % 2) * 566, y = 130 + Math.floor(i / 2) * 92;
+            const value = def.options[settingIndex[def.key]][0];
+            const color = def.key === 'alert' && settingIndex.alert ? LC.alert : (Math.floor(i / 2) % 2 ? LC.peach : LC.gold);
+            p.button(x, y, 550, 78, def.label + ':  ' + value, color, () => this.cycleSetting(def), 36);
+          });
+          p.text('MOVE TO', 660, 552, 36, LC.sky);
+          [['HELM', -0.6, -1.25], ['MID', 0, 0.4], ['AFT', 0, 1.8]].forEach(([label, x, z], i) => {
+            p.button(636 + i * 190, 590, 176, 78, label, LC.violet, () => this.teleport(x, z), 36);
+          });
+          p.button(70, 700, 550, 96, 'RESUME', LC.orange, () => this.toggleMenu(), 50);
+          p.button(636, 700, 550, 96, 'EXIT VR', LC.red, () => this.exitVR(), 50);
+          p.block(70, 826, 1116, 14, LC.lilac, 7);
+          p.text('LEFT STICK: WALK     RIGHT STICK: TURN     TRIGGER: PRESS PANELS', 628, 896, 32, LC.peach, 'center', 400);
+        });
+        this.menu.mesh.material.depthTest = false;
+        this.menu.mesh.material.transparent = true;
+        this.menu.mesh.renderOrder = 1000;
+        this.menu.el.classList.remove('ui');
+        this.el.appendChild(this.menu.el);
+        this.menu.el.object3D.visible = false;
+        this.menu.redraw();
+      },
+
+      redrawAll: function () {
+        [this.helm, this.infoPanel, this.shipPanel, this.menu].forEach((p) => p.redraw());
+      },
+
+      setStatus: function (text) {
+        this.status = text;
+        this.helm.redraw();
+      },
+
+      refreshPointers: function () {
+        document.querySelectorAll('[raycaster]').forEach((el) => {
+          if (el.components.raycaster) el.components.raycaster.refreshObjects();
+        });
+      },
+
+      toggleMenu: function () {
+        if (!this.ready) return;
+        sound.start();
+        this.menuOpen = !this.menuOpen;
+        const obj = this.menu.el.object3D;
+        obj.visible = this.menuOpen;
+        // Only the menu takes presses while it is open.
+        this.menu.el.classList.toggle('ui', this.menuOpen);
+        [this.helm, this.infoPanel, this.shipPanel].forEach((p) => p.el.classList.toggle('ui', !this.menuOpen));
+        if (this.menuOpen) {
+          const head = this.v1, dir = this.v2;
+          this.el.camera.getWorldPosition(head);
+          this.el.camera.getWorldDirection(dir);
+          dir.y = 0;
+          if (dir.lengthSq() < 0.0001) dir.set(0, 0, -1);
+          dir.normalize();
+          const toX = dir.x > 0 ? (1.25 - head.x) / dir.x : dir.x < 0 ? (-1.25 - head.x) / dir.x : 99;
+          const toZ = dir.z > 0 ? (2.35 - head.z) / dir.z : dir.z < 0 ? (-2.0 - head.z) / dir.z : 99;
+          const dist = Math.max(0.5, Math.min(1.25, Math.min(toX, toZ) - 0.1));
+          obj.position.copy(head).addScaledVector(dir, dist);
+          obj.lookAt(head.x, obj.position.y, head.z);
+          obj.scale.setScalar(dist / 1.25);
+          this.menu.redraw();
+        }
+        this.refreshPointers();
+        sound.key();
+      },
+
+      cycleSetting: function (def) {
+        settingIndex[def.key] = (settingIndex[def.key] + 1) % def.options.length;
+        saveSettings();
+        sound.key();
+        this.applySettings(def.key);
+        this.menu.redraw();
+      },
+
+      applySettings: function (changed) {
+        const level = setting('lights');
+        this.cabinMats.forEach((mat) => { mat.emissiveIntensity = mat.userData.base * level; });
+        this.cabinLight.intensity = 3 * level;
+        this.stripMat.color.set(0xfff4dc).multiplyScalar(Math.min(1, 0.4 + level * 0.6));
+        sound.setVolume();
+        if (changed === 'stars') this.buildStars();
+        if (changed === 'alert') {
+          this.klaxonTimer = 0;
+          this.alertLight.intensity = 0;
+          if (setting('alert')) sound.say('Red alert.');
+        }
+        if (changed === 'voice' && setting('voice')) sound.say('Voice interface enabled.');
+      },
+
+      teleport: function (x, z) {
+        document.querySelector('#rig').components['cabin-move'].teleport(x, z);
+        this.toggleMenu();
+      },
+
+      exitVR: function () {
+        this.toggleMenu();
+        this.el.exitVR();
+      },
+
+      // ------------------------------------------------------------------
+      // Flight
+      // ------------------------------------------------------------------
+      selectDestination: function (index) {
+        if (this.state !== 'impulse') { sound.deny(); return; }
+        this.selected = index;
+        sound.key();
+        this.setStatus(index === this.current ? 'ALREADY IN ORBIT HERE' : 'COURSE LAID IN  -  READY');
+        this.infoPanel.redraw();
+      },
+
+      setMode: function (mode) {
+        if (this.state !== 'impulse') { sound.deny(); return; }
+        sound.key();
+        this.mode = mode;
+        this.ease = 0;
+        if (mode === 'hold') {
+          this.holdPos.copy(this.pos);
+          this.holdQuat.copy(this.quat);
+          this.setStatus('HOLDING STATION');
+        } else if (mode === 'flyby') {
+          this.angle = Math.atan2(this.pos.x - SHIP_CENTER.x, this.pos.z - SHIP_CENTER.z);
+          this.setStatus('INSPECTION PASS  -  U.S.S. ENTERPRISE');
+          sound.say('Beginning inspection pass.');
+        } else {
+          const rel = this.v1.copy(this.pos).sub(PLANET_POS);
+          this.angle = Math.atan2(rel.dot(this.v2.set(0, 0.287, 0.958)), rel.x);
+          this.setStatus('STANDARD ORBIT  -  ' + SYSTEMS[this.current].name);
+          sound.say('Entering standard orbit.');
+        }
+      },
+
+      engage: function () {
+        if (this.state !== 'impulse' || this.selected === this.current) { sound.deny(); return; }
+        sound.confirm();
+        sound.whoosh(true);
+        sound.engine(1, 1.6);
+        sound.say('Course laid in for ' + SYSTEMS[this.selected].name.toLowerCase() + '. Engaging warp drive.');
+        this.state = 'spool';
+        this.stateTime = 0;
+        this.streaks.visible = true;
+        this.setStatus('WARP DRIVE ENGAGING');
+        this.infoPanel.redraw();
+      },
+
+      updateWarp: function (dt) {
+        this.stateTime += dt;
+        let amount = 1;
+        if (this.state === 'spool') {
+          amount = Math.pow(this.stateTime / 1.6, 2);
+          if (this.stateTime >= 1.6) {
+            this.state = 'cruise';
+            this.stateTime = 0;
+            this.flashLevel = 1;
+            this.system.visible = false;
+            this.sun.visible = this.sun2.visible = false;
+            this.stars.forEach((s) => { s.visible = false; });
+            this.loadSystem(this.selected);
+            this.sun.visible = this.sun2.visible = false;
+            this.lastSecond = -1;
+          }
+        } else if (this.state === 'cruise') {
+          const left = Math.max(0, Math.ceil(setting('warpTime') - this.stateTime));
+          if (left !== this.lastSecond) {
+            this.lastSecond = left;
+            this.setStatus('WARP 5  -  ARRIVAL IN ' + left + ' SEC');
+          }
+          if (this.stateTime >= setting('warpTime') && this.pendingTextures === 0) {
+            this.state = 'drop';
+            this.stateTime = 0;
+            this.flashLevel = 1;
+            sound.whoosh(false);
+            sound.engine(0, 1.5);
+            // Arrive ahead of the starship, which follows a moment later.
+            this.pos.set(300, 60, 620);
+            this.lookFrom(this.pos, this.v1.copy(SHIP_CENTER), this.v2.set(0, 1, 0), this.quat);
+            this.mode = 'hold';
+            this.holdPos.copy(this.pos);
+            this.holdQuat.copy(this.quat);
+            this.system.visible = true;
+            this.ship.visible = false;
+            this.sun.visible = true;
+            this.sun2.visible = !!SYSTEMS[this.current].sun.twin;
+            this.stars.forEach((s) => { s.visible = true; });
+            this.shipArrival = 0;
+          }
+        } else if (this.state === 'drop') {
+          amount = Math.pow(1 - this.stateTime / 0.8, 2);
+          if (this.stateTime >= 0.8) {
+            this.state = 'impulse';
+            this.streaks.visible = false;
+            this.selected = (this.current + 1) % SYSTEMS.length;
+            this.setStatus('ARRIVED  -  ' + SYSTEMS[this.current].name);
+            this.infoPanel.redraw();
+            sound.say('Now arriving at ' + SYSTEMS[this.current].name.toLowerCase() + '.');
+            amount = 0;
+          }
+        }
+        // Stretch the stars into streaks.
+        const pos = this.streaks.geometry.attributes.position.array;
+        const speed = 250 + 2700 * amount, length = 3 + 330 * amount;
+        for (let i = 0; i < this.streakCount; i++) {
+          let z = this.streakZ[i] + speed * dt;
+          if (z > 250) z -= 1650;
+          this.streakZ[i] = z;
+          pos[i * 6 + 2] = z;
+          pos[i * 6 + 5] = z - length;
+        }
+        this.streaks.geometry.attributes.position.needsUpdate = true;
+        this.streaks.material.opacity = Math.min(1, amount * 1.6);
+        this.warpCore.material.opacity = 0.55 * amount;
+      },
+
+      // The starship drops out of warp beside you.
+      updateShipArrival: function (dt) {
+        if (this.shipArrival < 0) return;
+        this.shipArrival += dt;
+        const t = (this.shipArrival - 2.6) / 0.7;
+        if (t < 0) return;
+        if (!this.ship.visible) {
+          this.ship.visible = true;
+          sound.tone('sine', 900, 90, 0.9, 0.35);
+          sound.say('The Enterprise is dropping out of warp.');
+        }
+        if (t < 1) {
+          this.ship.position.z = 60000 * Math.pow(1 - t, 3);
+          this.ship.scale.z = 1 + 30 * Math.pow(1 - t, 2);
+          this.arrivalFlash.material.opacity = t * t;
+        } else {
+          this.ship.position.z = 0;
+          this.ship.scale.z = 1;
+          this.arrivalFlash.material.opacity = Math.max(0, 1 - (t - 1) * 1.2);
+          if (this.arrivalFlash.material.opacity === 0) this.shipArrival = -1;
+        }
+      },
+
+      updatePose: function (dt) {
+        if (this.state === 'cruise') return;
+        if (this.mode === 'hold') {
+          this.wantPos.copy(this.holdPos);
+          this.wantQuat.copy(this.holdQuat);
+        } else if (this.mode === 'flyby') {
+          this.angle += dt * Math.PI * 2 / 110;
+          const a = this.angle, radius = 540;
+          this.wantPos.set(SHIP_CENTER.x + Math.sin(a) * radius, SHIP_CENTER.y + 70 + Math.sin(a * 2) * 90, SHIP_CENTER.z + Math.cos(a) * radius);
+          const tangent = this.v1.set(Math.cos(a), 0, -Math.sin(a));
+          this.lookFrom(this.wantPos, this.v2.copy(SHIP_CENTER).addScaledVector(tangent, 260), this.v3.set(0, 1, 0), this.wantQuat);
+        } else {
+          this.angle += dt * Math.PI * 2 / 300;
+          const a = this.angle, radius = SYSTEMS[this.current].planet.radius * 1.18;
+          const cos = Math.cos(a), sin = Math.sin(a);
+          const radial = this.v1.set(cos, 0.287 * sin, 0.958 * sin);
+          const tangent = this.v2.set(-sin, 0.287 * cos, 0.958 * cos);
+          this.wantPos.copy(PLANET_POS).addScaledVector(radial, radius);
+          const target = this.v3.copy(this.wantPos).addScaledVector(tangent, 1000).addScaledVector(radial, -620);
+          this.lookFrom(this.wantPos, target, radial, this.wantQuat);
+        }
+        this.ease = Math.min(1, this.ease + dt / 3);
+        const f = 1 - Math.exp(-0.9 * this.ease * dt);
+        this.pos.lerp(this.wantPos, f);
+        this.quat.slerp(this.wantQuat, f);
+      },
+
+      tick: function (time, delta) {
+        if (!this.ready) return;
+        const dt = Math.min(delta, 100) / 1000;
+        this.clock += dt;
+        runTextureJobs(4);
+
+        if (this.state !== 'impulse') this.updateWarp(dt);
+        this.updateShipArrival(dt);
+        this.updatePose(dt);
+
+        // Space moves around the stationary cabin.
+        this.inverse.copy(this.quat).invert();
+        this.space.quaternion.copy(this.inverse);
+        this.space.position.copy(this.pos).negate().applyQuaternion(this.inverse);
+        this.sky.quaternion.copy(this.inverse);
+
+        this.planet.rotation.y += dt * 0.004;
+        this.clouds.rotation.y += dt * 0.007;
+        const beat = this.clock % 1.6;
+        this.ship.userData.blink.forEach((light, i) => { light.visible = i < 2 ? beat < 0.8 : beat < 0.12; });
+
+        if (this.flashLevel > 0) {
+          this.flashLevel = Math.max(0, this.flashLevel - dt * 1.4);
+          this.flash.visible = this.flashLevel > 0;
+          this.flash.material.opacity = this.flashLevel;
+        }
+
+        if (setting('alert')) {
+          const wave = 0.5 + 0.5 * Math.sin(this.clock * 4.2);
+          this.alertLight.intensity = 9 * wave;
+          this.cabinLight.intensity = 1.2;
+          this.stripMat.color.setRGB(0.25 + 0.75 * wave, 0.03, 0.02);
+          this.klaxonTimer -= dt;
+          if (this.klaxonTimer <= 0) { this.klaxonTimer = 1.5; sound.klaxon(); }
+        }
+      }
+    });
+  </script>
+  <style>
+    #hint { position: fixed; left: 16px; bottom: 16px; z-index: 5; max-width: 420px; padding: 10px 14px;
+            font: 14px/1.4 Arial, sans-serif; color: #ffcc99; background: rgba(0, 0, 0, 0.6); border-left: 6px solid #ff9900; border-radius: 0 12px 12px 0; }
+  </style>
+</head>
+<body>
+  <div id="hint">Press the VR button in the corner to step aboard. Left stick walks, right stick turns, trigger presses panels, B or Y opens the menu. (Desktop: drag to look, WASD to walk, click panels, M for menu.)</div>
+  <a-scene shuttle-sim background="color: #000000" light="defaultLightsEnabled: false"
+           renderer="logarithmicDepthBuffer: true; antialias: true"
+           cursor="rayOrigin: mouse" raycaster="objects: .ui; far: 8">
+    <a-entity id="rig" cabin-move position="0 0 0.7">
+      <a-entity id="head" camera="near: 0.05; far: 70000" look-controls wasd-controls="acceleration: 14" position="0 1.6 0"></a-entity>
+      <a-entity id="leftHand" pointer-hand laser-controls="hand: left" raycaster="objects: .ui; far: 6"
+                line="color: #ff9900; opacity: 0.85; visible: false"></a-entity>
+      <a-entity id="rightHand" pointer-hand laser-controls="hand: right" raycaster="objects: .ui; far: 6"
+                line="color: #ff9900; opacity: 0.85; visible: false"></a-entity>
+    </a-entity>
+  </a-scene>
+  <script>
+    document.querySelector('a-scene').addEventListener('enter-vr', () => { document.querySelector('#hint').style.display = 'none'; });
+    document.querySelector('a-scene').addEventListener('exit-vr', () => { document.querySelector('#hint').style.display = ''; });
+  </script>
+</body>
+</html>

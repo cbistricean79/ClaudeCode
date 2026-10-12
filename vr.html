@@ -82,6 +82,9 @@
     // A blaster: zap sound, rumble and a beam flash every time the trigger is pulled.
     AFRAME.registerComponent('blaster', {
       init: function () {
+        const toggleMenu = () => this.el.sceneEl.components.game.toggleMenu();
+        this.el.addEventListener('bbuttondown', toggleMenu);
+        this.el.addEventListener('ybuttondown', toggleMenu);
         this.el.addEventListener('triggerdown', () => {
           sfx.zap();
           rumble(this.el, 0.6, 40);
@@ -155,7 +158,7 @@
       },
       hit: function () {
         const game = this.el.sceneEl.components.game;
-        if (!game.running || this.dead) return;
+        if (!game.running || game.paused || this.dead) return;
         this.hp--;
         if (this.hp <= 0) {
           game.kill(this);
@@ -168,9 +171,9 @@
         }
       },
       tick: function (time, delta) {
-        if (this.dead) return;
-        const dt = delta / 1000;
         const game = this.el.sceneEl.components.game;
+        if (this.dead || game.paused) return;
+        const dt = delta / 1000;
         const pos = this.el.object3D.position;
         this.el.sceneEl.camera.getWorldPosition(this.target);
         this.dir.subVectors(this.target, pos);
@@ -207,6 +210,12 @@
         this.hands = Array.from(document.querySelectorAll('[blaster]'));
         this.startButton = document.querySelector('#start');
         this.startButton.addEventListener('click', () => this.start());
+        this.paused = false;
+        this.menu = document.querySelector('#menu');
+        this.menu.querySelectorAll('[data-action]').forEach((button) => {
+          button.addEventListener('click', () => this.menuAction(button.dataset.action));
+        });
+        window.addEventListener('keydown', (e) => { if (e.key === 'm') this.toggleMenu(); });
         this.el.addEventListener('mousedown', () => { if (this.running) sfx.zap(); });
         this.flashOpacity = 0;
         this.bannerTime = 0;
@@ -219,8 +228,34 @@
           el.setAttribute('value', text);
         }
       },
+      // The pause menu: B or Y on the controllers (M on a keyboard).
+      toggleMenu: function () {
+        this.paused = !this.paused;
+        const menu = this.menu.object3D;
+        if (this.paused) {
+          const head = new THREE.Vector3();
+          const forward = new THREE.Vector3();
+          this.el.camera.getWorldPosition(head);
+          this.el.camera.getWorldDirection(forward);
+          forward.y = 0;
+          forward.normalize();
+          menu.position.copy(head).addScaledVector(forward, 2.2);
+          menu.lookAt(head);
+        } else {
+          menu.position.set(0, -100, 0);
+        }
+        // Enemies stop being targets while paused so they cannot block the menu.
+        document.querySelectorAll('[enemy]').forEach((el) => el.classList.toggle('target', !this.paused));
+        document.querySelectorAll('[raycaster]').forEach((el) => el.components.raycaster.refreshObjects());
+        tone('square', this.paused ? 500 : 700, this.paused ? 350 : 900, 0.1, 0.15);
+      },
+      menuAction: function (action) {
+        if (action === 'exit') { this.el.exitVR(); return; }
+        this.toggleMenu();
+        if (action === 'quit' && this.running) this.end();
+      },
       start: function () {
-        if (this.running) return;
+        if (this.running || this.paused) return;
         this.running = true;
         this.score = 0;
         this.lives = START_LIVES;
@@ -331,7 +366,7 @@
           this.flashOpacity = Math.max(0, this.flashOpacity - dt * 1.5);
           this.flash.setAttribute('material', 'opacity', this.flashOpacity);
         }
-        if (!this.running) return;
+        if (!this.running || this.paused) return;
 
         if (this.bannerTime > 0) {
           this.bannerTime -= dt;
@@ -377,6 +412,20 @@
            material="emissive: #ff2bd6; emissiveIntensity: 0.6">
       <a-text value="START" align="center" color="#ffffff" width="5" position="0 0 0.11"></a-text>
     </a-box>
+
+    <a-entity id="menu" position="0 -100 0">
+      <a-plane width="1.6" height="1.7" material="shader: flat; color: #07001f; opacity: 0.92; transparent: true; fog: false"></a-plane>
+      <a-text value="PAUSED" align="center" color="#00e5ff" width="6" position="0 0.62 0.02"></a-text>
+      <a-box class="target" data-action="resume" color="#00a8c0" width="1.2" height="0.3" depth="0.06" position="0 0.25 0.03">
+        <a-text value="RESUME" align="center" color="#ffffff" width="4" position="0 0 0.04"></a-text>
+      </a-box>
+      <a-box class="target" data-action="quit" color="#b8860b" width="1.2" height="0.3" depth="0.06" position="0 -0.12 0.03">
+        <a-text value="END GAME" align="center" color="#ffffff" width="4" position="0 0 0.04"></a-text>
+      </a-box>
+      <a-box class="target" data-action="exit" color="#c02040" width="1.2" height="0.3" depth="0.06" position="0 -0.49 0.03">
+        <a-text value="EXIT VR" align="center" color="#ffffff" width="4" position="0 0 0.04"></a-text>
+      </a-box>
+    </a-entity>
 
     <a-entity id="rig">
       <a-entity camera look-controls wasd-controls position="0 1.6 0">
