@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Neon Swarm VR</title>
+  <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
+  <script>
+    const SPAWN_DISTANCE = 20;
+    const WAVE_SECONDS = 20;
+    const START_LIVES = 3;
+
+    const ENEMY_TYPES = {
+      drone:  { shape: 'octahedron',   color: '#ff2bd6', radius: 0.35, speed: 1.0, hp: 1, points: 10, zigzag: 0 },
+      dart:   { shape: 'tetrahedron',  color: '#ffe93b', radius: 0.28, speed: 1.8, hp: 1, points: 25, zigzag: 2.5 },
+      tank:   { shape: 'dodecahedron', color: '#ff7a1a', radius: 0.6,  speed: 0.6, hp: 3, points: 50, zigzag: 0 },
+      bomb:   { shape: 'icosahedron',  color: '#3bff7a', radius: 0.3,  speed: 0.8, hp: 1, points: 0,  zigzag: 1 }
+    };
+
+    // ---------- sound (synthesised, no audio files) ----------
+    let audioCtx;
+    function audio() {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      return audioCtx;
+    }
+    function tone(type, from, to, duration, volume) {
+      try {
+        const ctx = audio();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(from, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(to, ctx.currentTime + duration);
+        gain.gain.setValueAtTime(volume, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+      } catch (e) { /* sound is optional */ }
+    }
+    function boom(duration, volume) {
+      try {
+        const ctx = audio();
+        const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < data.length; i++) {
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / data.length, 2);
+        }
+        const source = ctx.createBufferSource();
+        const filter = ctx.createBiquadFilter();
+        const gain = ctx.createGain();
+        source.buffer = buffer;
+        filter.type = 'lowpass';
+        filter.frequency.value = 1200;
+        gain.gain.value = volume;
+        source.connect(filter).connect(gain).connect(ctx.destination);
+        source.start();
+      } catch (e) { /* sound is optional */ }
+    }
+    const sfx = {
+      zap:     () => tone('sawtooth', 1400, 200, 0.12, 0.12),
+      clank:   () => tone('square', 300, 150, 0.08, 0.15),
+      explode: () => boom(0.35, 0.5),
+      bigBoom: () => { boom(1.0, 0.9); tone('sine', 200, 30, 0.8, 0.5); },
+      hurt:    () => tone('sawtooth', 180, 40, 0.5, 0.4),
+      wave:    () => { tone('square', 440, 440, 0.12, 0.15); setTimeout(() => tone('square', 660, 660, 0.2, 0.15), 130); },
+      over:    () => tone('sawtooth', 400, 50, 1.2, 0.3)
+    };
+
+    // ---------- controller rumble ----------
+    function rumble(hand, strength, ms) {
+      try {
+        const tracked = hand.components['tracked-controls'];
+        const pad = tracked && tracked.controller && tracked.controller.gamepad;
+        if (pad && pad.hapticActuators && pad.hapticActuators[0]) {
+          pad.hapticActuators[0].pulse(strength, ms);
+        }
+      } catch (e) { /* rumble is optional */ }
+    }
+
+    // A blaster: zap sound, rumble and a beam flash every time the trigger is pulled.
+    AFRAME.registerComponent('blaster', {
+      init: function () {
+        this.el.addEventListener('triggerdown', () => {
+          sfx.zap();
+          rumble(this.el, 0.6, 40);
+          this.el.setAttribute('line', 'color', '#ffffff');
+          setTimeout(() => this.el.setAttribute('line', 'color', '#00e5ff'), 70);
+        });
+      }
+    });
+
+    AFRAME.registerComponent('stars', {
+      init: function () {
+        const points = [];
+        for (let i = 0; i < 500; i++) {
+          const v = new THREE.Vector3().randomDirection();
+          v.y = Math.abs(v.y);
+          points.push(v.x * 90, v.y * 90 + 2, v.z * 90);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+        const material = new THREE.PointsMaterial({ color: '#ffffff', size: 0.5, fog: false });
+        this.el.setObject3D('stars', new THREE.Points(geometry, material));
+      }
+    });
+
+    // A burst of glowing shards that fly outward and fade.
+    AFRAME.registerComponent('explosion', {
+      schema: { color: { default: '#ffffff' }, size: { default: 1 } },
+      init: function () {
+        this.age = 0;
+        this.shards = [];
+        const geometry = new THREE.BoxGeometry(0.12, 0.12, 0.12);
+        const material = new THREE.MeshBasicMaterial({ color: this.data.color, fog: false });
+        const group = new THREE.Group();
+        for (let i = 0; i < 14; i++) {
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.userData.velocity = new THREE.Vector3().randomDirection()
+            .multiplyScalar((2 + Math.random() * 4) * this.data.size);
+          group.add(mesh);
+          this.shards.push(mesh);
+        }
+        this.el.setObject3D('shards', group);
+      },
+      tick: function (time, delta) {
+        const dt = delta / 1000;
+        this.age += dt;
+        if (this.age > 0.6) { this.el.remove(); return; }
+        const scale = (1 - this.age / 0.6) * this.data.size;
+        this.shards.forEach((mesh) => {
+          mesh.position.addScaledVector(mesh.userData.velocity, dt);
+          mesh.rotation.x += dt * 8;
+          mesh.rotation.y += dt * 6;
+          mesh.scale.setScalar(scale);
+        });
+      }
+    });
+
+    // An enemy flies at your head. Shoot it before it reaches you.
+    AFRAME.registerComponent('enemy', {
+      schema: {
+        type: { default: 'drone' },
+        speed: { default: 2 }
+      },
+      init: function () {
+        this.info = ENEMY_TYPES[this.data.type];
+        this.hp = this.info.hp;
+        this.phase = Math.random() * 10;
+        this.visual = this.el.firstElementChild;
+        this.target = new THREE.Vector3();
+        this.dir = new THREE.Vector3();
+        this.el.addEventListener('click', () => this.hit());
+      },
+      hit: function () {
+        const game = this.el.sceneEl.components.game;
+        if (!game.running || this.dead) return;
+        this.hp--;
+        if (this.hp <= 0) {
+          game.kill(this);
+        } else {
+          sfx.clank();
+          this.visual.setAttribute('material', 'emissive', '#ffffff');
+          setTimeout(() => {
+            if (!this.dead) this.visual.setAttribute('material', 'emissive', this.info.color);
+          }, 80);
+        }
+      },
+      tick: function (time, delta) {
+        if (this.dead) return;
+        const dt = delta / 1000;
+        const game = this.el.sceneEl.components.game;
+        const pos = this.el.object3D.position;
+        this.el.sceneEl.camera.getWorldPosition(this.target);
+        this.dir.subVectors(this.target, pos);
+        const distance = this.dir.length();
+        if (distance < 0.7) {
+          this.dead = true;
+          if (this.data.type !== 'bomb') game.hurt();
+          this.el.remove();
+          return;
+        }
+        this.dir.normalize();
+        pos.addScaledVector(this.dir, this.data.speed * dt);
+        if (this.info.zigzag) {
+          const sway = Math.cos(time / 1000 * 4 + this.phase) * this.info.zigzag * dt;
+          pos.x += -this.dir.z * sway;
+          pos.z += this.dir.x * sway;
+        }
+        this.visual.object3D.rotation.y += dt * 3;
+        this.visual.object3D.rotation.x += dt * 1.5;
+      }
+    });
+
+    // Runs the waves, the score and your lives.
+    AFRAME.registerComponent('game', {
+      init: function () {
+        this.running = false;
+        this.score = 0;
+        this.best = 0;
+        try { this.best = Number(localStorage.getItem('neon-swarm-best')) || 0; } catch (e) { /* no storage */ }
+        this.hud = document.querySelector('#hud');
+        this.banner = document.querySelector('#banner');
+        this.wrist = document.querySelector('#wrist');
+        this.flash = document.querySelector('#flash');
+        this.hands = Array.from(document.querySelectorAll('[blaster]'));
+        this.startButton = document.querySelector('#start');
+        this.startButton.addEventListener('click', () => this.start());
+        this.el.addEventListener('mousedown', () => { if (this.running) sfx.zap(); });
+        this.flashOpacity = 0;
+        this.bannerTime = 0;
+        this.setText(this.hud, 'NEON SWARM');
+        this.setText(this.banner, 'Shoot the swarm before it reaches you.\nGreen orbs wipe out everything.\n\nBest: ' + this.best);
+      },
+      setText: function (el, text) {
+        if (el.lastText !== text) {
+          el.lastText = text;
+          el.setAttribute('value', text);
+        }
+      },
+      start: function () {
+        if (this.running) return;
+        this.running = true;
+        this.score = 0;
+        this.lives = START_LIVES;
+        this.wave = 1;
+        this.waveTime = 0;
+        this.sinceSpawn = 0;
+        this.combo = 0;
+        this.lastKill = 0;
+        this.startButton.object3D.position.y = -100;
+        this.announce('WAVE 1');
+        sfx.wave();
+      },
+      announce: function (text) {
+        this.setText(this.banner, text);
+        this.bannerTime = 2;
+      },
+      multiplier: function () {
+        return Math.min(8, 1 + Math.floor(this.combo / 3));
+      },
+      explode: function (position, color, size) {
+        const burst = document.createElement('a-entity');
+        burst.setAttribute('position', position);
+        burst.setAttribute('explosion', { color: color, size: size });
+        this.el.appendChild(burst);
+      },
+      kill: function (enemy, chained) {
+        enemy.dead = true;
+        const now = performance.now();
+        this.combo = now - this.lastKill < 2500 ? this.combo + 1 : 0;
+        this.lastKill = now;
+        this.score += enemy.info.points * this.multiplier();
+        this.explode(enemy.el.object3D.position.clone(), enemy.info.color, enemy.info.radius * 3);
+        enemy.el.remove();
+        if (chained) return;
+        if (enemy.data.type === 'bomb') {
+          this.detonate();
+        } else {
+          sfx.explode();
+        }
+      },
+      detonate: function () {
+        sfx.bigBoom();
+        this.flash.setAttribute('material', 'color', '#ffffff');
+        this.flashOpacity = 0.7;
+        this.hands.forEach((hand) => rumble(hand, 1, 300));
+        document.querySelectorAll('[enemy]').forEach((el) => {
+          const enemy = el.components.enemy;
+          if (enemy && enemy.info && !enemy.dead) this.kill(enemy, true);
+        });
+        this.announce('BOOM!');
+      },
+      hurt: function () {
+        if (!this.running) return;
+        this.lives--;
+        this.combo = 0;
+        sfx.hurt();
+        this.flash.setAttribute('material', 'color', '#ff0000');
+        this.flashOpacity = 0.6;
+        this.hands.forEach((hand) => rumble(hand, 1, 400));
+        if (this.lives <= 0) this.end();
+      },
+      end: function () {
+        this.running = false;
+        document.querySelectorAll('[enemy]').forEach((el) => el.remove());
+        const record = this.score > this.best;
+        if (record) {
+          this.best = this.score;
+          try { localStorage.setItem('neon-swarm-best', this.best); } catch (e) { /* no storage */ }
+        }
+        this.startButton.object3D.position.y = 1.2;
+        this.setText(this.hud, 'GAME OVER');
+        this.setText(this.banner, (record ? 'NEW RECORD!  ' : '') + 'Score: ' + this.score +
+          '\nReached wave ' + this.wave + '   Best: ' + this.best + '\n\nShoot START to go again');
+        this.setText(this.wrist, '');
+        this.bannerTime = 0;
+        sfx.over();
+      },
+      spawn: function () {
+        const roll = Math.random();
+        let type = 'drone';
+        if (roll < 0.06) type = 'bomb';
+        else if (this.wave >= 3 && roll < 0.2) type = 'tank';
+        else if (this.wave >= 2 && roll < 0.45) type = 'dart';
+        const info = ENEMY_TYPES[type];
+
+        const angle = (Math.random() * 220 - 110) * Math.PI / 180;
+        const enemy = document.createElement('a-entity');
+        enemy.classList.add('target');
+        // Invisible, slightly oversized shell so fast targets are fair to hit.
+        enemy.setAttribute('geometry', { primitive: 'sphere', radius: info.radius * 1.5, segmentsWidth: 8, segmentsHeight: 6 });
+        enemy.setAttribute('material', { opacity: 0, transparent: true, depthWrite: false });
+        const visual = document.createElement('a-entity');
+        visual.setAttribute('geometry', { primitive: info.shape, radius: info.radius });
+        visual.setAttribute('material', { color: info.color, emissive: info.color, emissiveIntensity: 0.8, flatShading: true });
+        enemy.appendChild(visual);
+        enemy.setAttribute('position', {
+          x: Math.sin(angle) * SPAWN_DISTANCE,
+          y: 0.8 + Math.random() * 4,
+          z: -Math.cos(angle) * SPAWN_DISTANCE
+        });
+        enemy.setAttribute('enemy', { type: type, speed: info.speed * (2 + this.wave * 0.3) });
+        this.el.appendChild(enemy);
+      },
+      tick: function (time, delta) {
+        const dt = delta / 1000;
+
+        if (this.flashOpacity > 0) {
+          this.flashOpacity = Math.max(0, this.flashOpacity - dt * 1.5);
+          this.flash.setAttribute('material', 'opacity', this.flashOpacity);
+        }
+        if (!this.running) return;
+
+        if (this.bannerTime > 0) {
+          this.bannerTime -= dt;
+          if (this.bannerTime <= 0) this.setText(this.banner, '');
+        }
+
+        this.waveTime += dt;
+        if (this.waveTime > WAVE_SECONDS) {
+          this.waveTime = 0;
+          this.wave++;
+          this.announce('WAVE ' + this.wave);
+          sfx.wave();
+        }
+
+        this.sinceSpawn += delta;
+        if (this.sinceSpawn > Math.max(350, 1300 - this.wave * 150)) {
+          this.sinceSpawn = 0;
+          this.spawn();
+        }
+
+        if (performance.now() - this.lastKill > 2500) this.combo = 0;
+        const mult = this.multiplier();
+        this.setText(this.hud, 'SCORE ' + this.score + (mult > 1 ? '   x' + mult : ''));
+        this.setText(this.wrist, 'LIVES ' + this.lives + '\nWAVE ' + this.wave);
+      }
+    });
+  </script>
+</head>
+<body>
+  <a-scene game background="color: #050014" fog="type: exponential; color: #050014; density: 0.03"
+           cursor="rayOrigin: mouse" raycaster="objects: .target; far: 40">
+    <a-entity stars></a-entity>
+    <a-entity geometry="primitive: plane; width: 80; height: 80; segmentsWidth: 40; segmentsHeight: 40"
+              material="color: #00e5ff; wireframe: true" rotation="-90 0 0"></a-entity>
+    <a-plane width="80" height="80" color="#07001f" rotation="-90 0 0" position="0 -0.02 0"></a-plane>
+    <a-entity light="type: ambient; intensity: 0.9"></a-entity>
+    <a-entity light="type: directional; intensity: 0.8" position="2 6 3"></a-entity>
+
+    <a-text id="hud" value="" align="center" color="#00e5ff" width="14" position="0 4.6 -7" material="fog: false"></a-text>
+    <a-text id="banner" value="" align="center" color="#ffffff" width="9" position="0 3.2 -7" material="fog: false"></a-text>
+
+    <a-box id="start" class="target" color="#ff2bd6" width="1.4" height="0.6" depth="0.2" position="0 1.2 -3"
+           material="emissive: #ff2bd6; emissiveIntensity: 0.6">
+      <a-text value="START" align="center" color="#ffffff" width="5" position="0 0 0.11"></a-text>
+    </a-box>
+
+    <a-entity id="rig">
+      <a-entity camera look-controls wasd-controls position="0 1.6 0">
+        <a-sphere id="flash" radius="0.4" material="shader: flat; side: back; color: #ff0000; opacity: 0; transparent: true; depthTest: false; fog: false"></a-sphere>
+      </a-entity>
+      <a-entity blaster laser-controls="hand: left" raycaster="objects: .target; far: 40" line="color: #00e5ff">
+        <a-text id="wrist" value="" align="center" color="#ffffff" width="1.2" position="0 0.09 0.05" rotation="-60 0 0"></a-text>
+      </a-entity>
+      <a-entity blaster laser-controls="hand: right" raycaster="objects: .target; far: 40" line="color: #00e5ff"></a-entity>
+    </a-entity>
+  </a-scene>
+</body>
+</html>
